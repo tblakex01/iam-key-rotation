@@ -24,11 +24,7 @@ def passwordgen():
     # fix password length
     pwd_length = 20
 
-    # generate a password string
-    pwd = ''
-    for _i in range(pwd_length):
-        pwd += ''.join(secrets.choice(alphabet))
-    return pwd
+    return ''.join(''.join(secrets.choice(alphabet)) for _i in range(pwd_length))
 
 def main():
     """ Reset your IAM user password """
@@ -43,11 +39,11 @@ def main():
         print(pwd)
         print(f"\nMetadata response output:\n", response)
     except botocore.exceptions.ClientError as error:
-        print(f"Unexpected error: %s" % error)
+        print(f"Unexpected error: {error}")
     except client.exceptions.PasswordPolicyViolationException as error:
-        print(f"Password policy violation: %s" % error)
+        print(f"Password policy violation: {error}")
     except client.exceptions.EntityTemporarilyUnmodifiableException as error:
-        print(f"Entity temporarily unmodifiable: %s" % error)
+        print(f"Entity temporarily unmodifiable: {error}")
 
 if __name__ == "__main__":
     main()

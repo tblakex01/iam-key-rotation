@@ -43,12 +43,14 @@ def lambda_handler(event, context):
             if days_since_password_change > 78:
                 # Retrieve user's email address from tags
                 response = iam_client.list_user_tags(UserName=username)
-                email = None
-                for tag in response['Tags']:
-                    if tag['Key'] == 'email':
-                        email = tag['Value']
-                        break
-                if email:
+                if email := next(
+                    (
+                        tag['Value']
+                        for tag in response['Tags']
+                        if tag['Key'] == 'email'
+                    ),
+                    None,
+                ):
                     users_to_notify.append({'username': username, 'email': email})
 
     # Send email notifications
