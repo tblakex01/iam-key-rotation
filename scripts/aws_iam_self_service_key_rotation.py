@@ -30,8 +30,7 @@ def parse_args():
                         help="delete access key; 1 expected input: <keyID>")
     parser.add_argument('-l', '--list', action='store_true',
                         help="list access key ID, status, creation date")
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
 def main():
     """ API access key rotation """
@@ -41,8 +40,8 @@ def main():
             response = client.create_access_key()
             new_key = response['AccessKey']['AccessKeyId']
             new_secret = response['AccessKey']['SecretAccessKey']
-            print(f"New Key:        %s" % new_key)
-            print(f"Secret:         %s" % new_secret)
+            print(f"New Key:        {new_key}")
+            print(f"Secret:         {new_secret}")
             print(f"\nMetadata response output:\n%s" % response, "\n")
             update_creds = input(
                 f"Update {str(path)} file w/ new key (y/n)? "\
@@ -51,9 +50,10 @@ def main():
             if update_creds.lower() == 'y':
                 with open(path, "w", encoding="utf-8") as file:
                     lines = [
-                        "[default]\n", "aws_access_key_id = " + new_key + "\n",
-                        "aws_secret_access_key = " + new_secret + "\n"
-                        ]
+                        "[default]\n",
+                        f"aws_access_key_id = {new_key}" + "\n",
+                        f"aws_secret_access_key = {new_secret}" + "\n",
+                    ]
                     file.writelines(lines)
                     file.close()
                     with open(path, "r", encoding="utf-8") as file:
@@ -62,7 +62,7 @@ def main():
             else:
                 print(f"\nYou answered 'n' or provided incorrect input, bye!")
         except client.exceptions.LimitExceededException as error:
-            print(f"Access key limit exceeded, delete 1 of your keys: %s" % error)
+            print(f"Access key limit exceeded, delete 1 of your keys: {error}")
     elif args.update:
         if args.update[1].lower() == 'active':
             response = client.update_access_key(

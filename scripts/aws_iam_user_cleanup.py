@@ -49,9 +49,7 @@ def delete_mfa_devices(user_name):
 
 def main():
     """ Get the IAM username argument and proceed with cleanup only if username is valid """
-    user_name = check_username()
-
-    if user_name:
+    if user_name := check_username():
         delete_login_profile(user_name)
         delete_mfa_devices(user_name)
 

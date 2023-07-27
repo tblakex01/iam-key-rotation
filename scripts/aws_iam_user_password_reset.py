@@ -26,11 +26,7 @@ def passwordgen():
     # fix password length
     pwd_length = 20
 
-    # generate a password string
-    pwd = ''
-    for _i in range(pwd_length):
-        pwd += ''.join(secrets.choice(alphabet))
-    return pwd
+    return ''.join(''.join(secrets.choice(alphabet)) for _i in range(pwd_length))
 
 def parse_args():
     """ Define cli args to be parsed into main()"""
@@ -44,8 +40,7 @@ def parse_args():
     profile = subparser.add_parser('profile', help="Create user login profile")
     profile.add_argument('-u', '--username', type=str,
                         required=True, help="AWS IAM Username")
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
 def main():
     """ List, reset or create login profiles for user accounts and output temp password """
