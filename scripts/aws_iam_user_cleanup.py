@@ -1,7 +1,7 @@
 """
 Jenna Sprattler | SRE Kentik | 2023-06-07
-Script to cleanup hardware/virtual MFA devices and login
-profiles prior to deleting user programmatically from e.g.
+Script to cleanup hardware/virtual MFA devices, access keys and
+login profiles prior to deleting user programmatically from e.g.
 Terraform where these settings are managed outside of the code.
 """
 
@@ -31,7 +31,7 @@ def delete_login_profile(user_name):
         client.delete_login_profile(UserName=user_name)
         print(f"Deleting login profile for {user_name}")
     except client.exceptions.NoSuchEntityException:
-        print(f"No login profile exists for {user_name}")
+        print(f"No login profile found for {user_name}")
 
 def delete_mfa_devices(user_name):
     """ Get the list of MFA devices for the user and delete each MFA device """
@@ -47,11 +47,28 @@ def delete_mfa_devices(user_name):
         print(f"Deleting MFA device for {user_name}: {device_name}")
         client.deactivate_mfa_device(UserName=user_name, SerialNumber=device_name)
 
+def delete_access_keys(user_name):
+    """ Delete all access keys associated with user """
+    # Get all access keys for the specified user
+    response = client.list_access_keys(UserName=user_name)
+    access_keys = response['AccessKeyMetadata']
+
+    if not access_keys:
+        print(f"No access keys found for {user_name}")
+        return
+
+    # Delete each access key
+    for key in access_keys:
+        access_key_id = key['AccessKeyId']
+        client.delete_access_key(UserName=user_name, AccessKeyId=access_key_id)
+        print(f"Deleted access key: {access_key_id} for {user_name}")
+
 def main():
     """ Get the IAM username argument and proceed with cleanup only if username is valid """
     if user_name := check_username():
         delete_login_profile(user_name)
         delete_mfa_devices(user_name)
+        delete_access_keys(user_name)
 
 if __name__ == "__main__":
     main()
