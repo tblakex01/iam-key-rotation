@@ -1,0 +1,195 @@
+# IAM Key Rotation and Security Policy Configuration
+# This file defines the security policies and thresholds for IAM management
+
+# Access Key Rotation Policy
+access_key_policy:
+  # Age thresholds in days
+  warning_threshold: 75     # Send warning notification
+  urgent_threshold: 85      # Send urgent notification
+  disable_threshold: 90     # Disable key (if auto_disable is true)
+  
+  # Enforcement settings
+  auto_disable: false       # Automatically disable expired keys
+  exemption_tag: "key-rotation-exempt"  # Tag to exempt users from rotation
+  
+  # Grace period for new keys (days to wait before enforcing rotation on newly created keys)
+  grace_period: 7
+
+# Password Policy
+password_policy:
+  # Age thresholds in days
+  warning_threshold: 78     # Send warning notification
+  urgent_threshold: 85      # Send urgent notification
+  expire_threshold: 90      # Password expires
+  
+  # Password requirements
+  minimum_length: 20
+  require_uppercase: true
+  require_lowercase: true
+  require_numbers: true
+  require_symbols: true
+
+# MFA Policy
+mfa_policy:
+  # Enforcement settings
+  required_for_console: true
+  required_for_api: false
+  
+  # Grace period for new users to enable MFA (days)
+  grace_period: 7
+
+# Notification Settings
+notifications:
+  # Email settings
+  sender_email: "cloud-admins@jennasrunbooks.com"
+  
+  # Notification frequency
+  daily_digest: true        # Send daily compliance digest
+  immediate_alerts: true    # Send immediate alerts for violations
+  
+  # Email templates
+  templates:
+    access_key_warning: |
+      Your AWS access key {key_id} is {age} days old and should be rotated soon.
+      Warning threshold: {warning_threshold} days
+      Urgent threshold: {urgent_threshold} days
+      Disable threshold: {disable_threshold} days
+    
+    access_key_urgent: |
+      URGENT: Your AWS access key {key_id} is {age} days old and will be disabled in {days_remaining} days.
+      Please rotate it immediately using the self-service script.
+    
+    access_key_disabled: |
+      CRITICAL: Your AWS access key {key_id} has been automatically disabled after {age} days.
+      Please create a new key and update your applications immediately.
+
+# Monitoring and Compliance
+monitoring:
+  # CloudWatch metrics namespace
+  metrics_namespace: "IAM/KeyRotation"
+  
+  # Compliance reporting
+  daily_reports: true
+  export_formats: ["json", "csv"]
+  report_retention_days: 90
+  
+  # Alerting thresholds
+  alert_on_expired_keys: 0      # Alert if any keys are expired
+  alert_on_urgent_keys: 5       # Alert if more than 5 keys are urgent
+  alert_on_non_compliant_users: 10  # Alert if more than 10 users are non-compliant
+
+# Lambda Function Settings
+lambda:
+  # Execution settings
+  timeout: 300              # 5 minutes
+  memory: 256               # MB
+  
+  # Scheduling
+  schedule: "rate(1 day)"   # Run daily
+  
+  # Retry settings
+  max_retries: 3
+  retry_delay: 60           # seconds
+
+# Environment-specific overrides
+environments:
+  development:
+    access_key_policy:
+      auto_disable: false
+      disable_threshold: 120  # More lenient in dev
+    
+    notifications:
+      immediate_alerts: false
+  
+  staging:
+    access_key_policy:
+      auto_disable: false
+      disable_threshold: 100
+  
+  production:
+    access_key_policy:
+      auto_disable: true      # Strict enforcement in prod
+      disable_threshold: 90
+    
+    monitoring:
+      alert_on_expired_keys: 0
+      alert_on_urgent_keys: 3  # More sensitive alerting
+
+# User Exemptions
+# Users or roles that are exempt from certain policies
+exemptions:
+  # Service accounts that may need longer-lived keys
+  service_accounts:
+    - "backup-service"
+    - "monitoring-agent"
+    - "ci-cd-pipeline"
+  
+  # Break-glass users for emergency access
+  emergency_users:
+    - "emergency-admin"
+  
+  # Temporary exemptions (with expiration dates)
+  temporary:
+    - username: "contractor-user"
+      exempt_from: ["access_key_rotation"]
+      expires: "2024-12-31"
+      reason: "Third-party integration testing"
+
+# Automation Settings
+automation:
+  # Self-healing capabilities
+  auto_create_reports: true
+  auto_notify_managers: true  # Notify user's manager (from tags) of violations
+  
+  # Integration settings
+  slack_webhook: ""         # Optional Slack integration
+  jira_integration: false   # Create JIRA tickets for violations
+  
+  # Workflow automation
+  auto_generate_tickets: false
+  ticket_priority_mapping:
+    expired_keys: "High"
+    urgent_keys: "Medium"
+    warning_keys: "Low"
+
+# Security Settings
+security:
+  # Audit logging
+  enable_audit_logs: true
+  audit_log_retention: 365  # days
+  
+  # Access controls
+  require_mfa_for_admin_scripts: true
+  encrypt_notifications: false
+  
+  # Data handling
+  anonymize_reports: false
+  data_retention_days: 365
+
+# Regional Settings
+aws:
+  # Default region for resources
+  default_region: "us-east-1"
+  
+  # Multi-region support
+  replicate_metrics: false
+  backup_regions: []
+  
+  # SES configuration
+  ses_region: "us-east-1"
+  ses_configuration_set: ""
+
+# Logging Configuration
+logging:
+  level: "INFO"             # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "json"            # json, text
+  include_timestamps: true
+  include_caller: true
+  
+  # Log destinations
+  destinations:
+    - type: "cloudwatch"
+      log_group: "/aws/lambda/iam-access-key-enforcement"
+    - type: "s3"
+      bucket: ""            # Optional S3 logging
+      prefix: "iam-logs/"

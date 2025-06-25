@@ -3,16 +3,18 @@ Jenna Sprattler | SRE Kentik | 2023-05-21
 lambda function to send email notifications (SES) to users when passwords are expiring
 based on a strict password policy w/ max password age of 90 days
 """
+
 import time
 from datetime import datetime
 from dateutil import parser
 import boto3
 
-iam_client = boto3.client('iam')
-ses_client = boto3.client('ses')
+iam_client = boto3.client("iam")
+ses_client = boto3.client("ses")
+
 
 def lambda_handler(event, context):
-    """ Get IAM creds report, check for expiring passwords & notify users """
+    """Get IAM creds report, check for expiring passwords & notify users"""
     iam_client.generate_credential_report()
 
     while True:
@@ -21,42 +23,41 @@ def lambda_handler(event, context):
 
         # Get the credential report generation status
         response = iam_client.get_credential_report()
-        if 'Content' in response:
+        if "Content" in response:
             break
 
     credential_report = iam_client.get_credential_report()
-    credential_report_csv = credential_report['Content'].decode('utf-8')
+    credential_report_csv = credential_report["Content"].decode("utf-8")
 
     # Process the credential report
     users_to_notify = []
-    for line in credential_report_csv.split('\n')[1:]:
-        fields = line.split(',')
+    for line in credential_report_csv.split("\n")[1:]:
+        fields = line.split(",")
         username = fields[0]
         password_last_changed = fields[5]
 
-        if password_last_changed not in ('N/A', 'not_supported'):
+        if password_last_changed not in ("N/A", "not_supported"):
             # Parse the date and time components from the timestamp
             password_last_changed_date = parser.parse(password_last_changed)
             days_since_password_change = (
-                datetime.now() - password_last_changed_date.replace(tzinfo=None)).days
+                datetime.now() - password_last_changed_date.replace(tzinfo=None)
+            ).days
 
             if days_since_password_change > 78:
                 # Retrieve user's email address from tags
                 response = iam_client.list_user_tags(UserName=username)
                 if email := next(
-                    (
-                        tag['Value']
-                        for tag in response['Tags']
-                        if tag['Key'] == 'email'
-                    ),
+                    (tag["Value"] for tag in response["Tags"] if tag["Key"] == "email"),
                     None,
                 ):
-                    users_to_notify.append({'username': username, 'email': email})
+                    users_to_notify.append({"username": username, "email": email})
 
     # Send email notifications
     for user in users_to_notify:
-        username = user['username']  # Get the username for the current user in the notify list
-        message = f'''
+        username = user[
+            "username"
+        ]  # Get the username for the current user in the notify list
+        message = f"""
             <html>
             <body>
                 <p>Hello {username},</p>
@@ -70,14 +71,14 @@ def lambda_handler(event, context):
                 <p>Cloud Admins</p>
             </body>
             </html>
-            '''
+            """
         ses_client.send_email(
-            Source='cloud-admins@jennasrunbooks.com',
-            Destination={'ToAddresses': [user['email']]},
+            Source="cloud-admins@jennasrunbooks.com",
+            Destination={"ToAddresses": [user["email"]]},
             Message={
-                'Subject': {'Data': 'AWS Password Expiry Notification'},
-                'Body': {'Html': {'Data': message}}
-            }
+                "Subject": {"Data": "AWS Password Expiry Notification"},
+                "Body": {"Html": {"Data": message}},
+            },
         )
 
-    return 'Password expiry notifications sent.'
+    return "Password expiry notifications sent."

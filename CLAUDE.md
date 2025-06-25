@@ -158,7 +158,34 @@ terraform apply
    - Check IAM permissions if scripts fail
    - Verify boto3 version compatibility
 
-## Notes
+## Notes for Python Testing, formatting, and code quality checks.
 - All scripts use boto3 for AWS API interactions
 - Password generation uses Python's `secrets` module for cryptographic security
-- Scripts follow AWS best practices for key rotation
+- Scripts follow AWS best practices for key rotation- Always use Flake8 for linting the application. E501 errors can be ignored up to 120 lines.
+- Always use Black for formatting the application.
+- Always use Pyright or mypy for type checking the application.
+
+ ### Code Quality
+```bash
+# Format code with Black
+black .
+
+# Type checking
+mypy .
+```
+
+# Notes for Terraform validation, formatting, plan
+ ### Terraform Workflow
+```bash
+# Initialize Terraform (required after cloning or adding providers)
+terraform init
+
+# Validate configuration syntax
+terraform validate
+
+# Format Terraform files
+terraform fmt -recursive
+
+# Plan infrastructure changes
+terraform plan
+```
