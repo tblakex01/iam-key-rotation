@@ -193,7 +193,7 @@ class TestCurrentUserRetrieval(unittest.TestCase):
 class TestAuditLogging(unittest.TestCase):
     """Test audit logging functionality"""
 
-    @patch("builtins.open", new_callable=Mock)
+    @patch("builtins.open", new_callable=unittest.mock.mock_open)
     def test_log_password_reset(self, mock_open):
         """Test password reset logging"""
         username = "testuser"

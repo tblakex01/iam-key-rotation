@@ -17,17 +17,34 @@ client = boto3.client("iam")
 
 def passwordgen():
     """
-    Generate temporary strict password
+    Generate temporary strict password that meets AWS password policy requirements
     """
-    # define the alphabet
-    letters = string.ascii_letters
+    # Define character classes
+    uppercase = string.ascii_uppercase
+    lowercase = string.ascii_lowercase
     digits = string.digits
     special_chars = string.punctuation
-    alphabet = letters + digits + special_chars
-    # fix password length
+    
+    # Password length
     pwd_length = 20
-
-    return "".join("".join(secrets.choice(alphabet)) for _i in range(pwd_length))
+    
+    # Ensure at least one character from each required class
+    password = [
+        secrets.choice(uppercase),
+        secrets.choice(lowercase),
+        secrets.choice(digits),
+        secrets.choice(special_chars)
+    ]
+    
+    # Fill the rest of the password
+    alphabet = uppercase + lowercase + digits + special_chars
+    for _ in range(pwd_length - 4):
+        password.append(secrets.choice(alphabet))
+    
+    # Shuffle to avoid predictable character positions
+    secrets.SystemRandom().shuffle(password)
+    
+    return "".join(password)
 
 
 def parse_args():
