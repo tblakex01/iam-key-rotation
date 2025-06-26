@@ -13,6 +13,7 @@ To rotate access keys, you should follow these steps:
 """
 
 import argparse
+import configparser
 import json
 import logging
 from datetime import datetime
@@ -225,13 +226,21 @@ def main():
                     backup_credentials()
 
                 try:
-                    with open(path, "w", encoding="utf-8") as file:
-                        lines = [
-                            "[default]\n",
-                            f"aws_access_key_id = {new_key}\n",
-                            f"aws_secret_access_key = {new_secret}\n",
-                        ]
-                        file.writelines(lines)
+                    config = configparser.ConfigParser()
+                    
+                    # Read existing config
+                    if path.exists():
+                        config.read(path)
+                    
+                    # Update default profile
+                    if 'default' not in config:
+                        config['default'] = {}
+                    config['default']['aws_access_key_id'] = new_key
+                    config['default']['aws_secret_access_key'] = new_secret
+                    
+                    # Write back preserving other profiles
+                    with open(path, 'w', encoding='utf-8') as configfile:
+                        config.write(configfile)
 
                     rprint("[green]✓[/green] Credentials file updated successfully!")
                     rprint("\n[yellow]Next steps:[/yellow]")

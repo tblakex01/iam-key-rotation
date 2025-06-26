@@ -11,6 +11,7 @@ Generates comprehensive reports on IAM user compliance including:
 
 import argparse
 import csv
+import io
 import json
 import logging
 import time
@@ -86,13 +87,10 @@ class IAMComplianceReport:
         """Parse credential report and extract user data"""
         rprint("[blue]Parsing credential report...[/blue]")
 
-        lines = report_csv.strip().split("\n")
-
-        for line in lines[1:]:  # Skip header
-            if not line:
-                continue
-
-            fields = line.split(",")
+        csv_reader = csv.reader(io.StringIO(report_csv))
+        header = next(csv_reader)  # Skip header
+        
+        for fields in csv_reader:
             if len(fields) < 15:  # Ensure we have enough fields
                 continue
 
