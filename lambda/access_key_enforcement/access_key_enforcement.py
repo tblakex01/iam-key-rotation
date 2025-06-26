@@ -39,12 +39,29 @@ def lambda_handler(event, context):  # noqa: ARG001
     try:
         iam_client.generate_credential_report()
 
-        # Wait for report generation
+        # Wait for report generation with timeout
+        timeout_seconds = int(os.environ.get("CREDENTIAL_REPORT_TIMEOUT", "60"))
+        max_attempts = timeout_seconds // 2  # Convert seconds to attempts (2 sec intervals)
+        attempt = 0
+        
         while True:
+            attempt += 1
+            if attempt > max_attempts:
+                timeout_seconds = max_attempts * 2
+                logger.error(
+                    f"Credential report generation timed out after {timeout_seconds} seconds"
+                )
+                raise Exception(
+                    f"Credential report generation timed out after {timeout_seconds} seconds. "
+                    "AWS may be experiencing issues or the account has too many users."
+                )
+            
             time.sleep(2)
             response = iam_client.get_credential_report()
             if "Content" in response:
+                logger.info(f"Credential report generated successfully after {attempt * 2} seconds")
                 break
+                
     except ClientError as e:
         logger.error(f"Error generating credential report: {e}")
         raise
