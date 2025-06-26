@@ -10,7 +10,9 @@ To be run by an AWS user w/ User Admin privileges
 import argparse
 import secrets
 import string
+import sys
 import boto3
+from botocore.exceptions import ClientError
 
 client = boto3.client("iam")
 
@@ -24,26 +26,26 @@ def passwordgen():
     lowercase = string.ascii_lowercase
     digits = string.digits
     special_chars = string.punctuation
-    
+
     # Password length
     pwd_length = 20
-    
+
     # Ensure at least one character from each required class
     password = [
         secrets.choice(uppercase),
         secrets.choice(lowercase),
         secrets.choice(digits),
-        secrets.choice(special_chars)
+        secrets.choice(special_chars),
     ]
-    
+
     # Fill the rest of the password
     alphabet = uppercase + lowercase + digits + special_chars
     for _ in range(pwd_length - 4):
         password.append(secrets.choice(alphabet))
-    
+
     # Shuffle to avoid predictable character positions
     secrets.SystemRandom().shuffle(password)
-    
+
     return "".join(password)
 
 
@@ -68,26 +70,127 @@ def parse_args():
 def main():
     """List, reset or create login profiles for user accounts and output temp password"""
     args = parse_args()
-    pwd = passwordgen()
+
     if args.command == "list-users":
-        for user in client.list_users()["Users"]:
-            print(f"User: {(user['UserName'])}")
+        try:
+            response = client.list_users()
+            users = response.get("Users", [])
+            if not users:
+                print("No IAM users found.")
+                return
+
+            print(f"Found {len(users)} IAM users:")
+            for user in users:
+                print(f"  - {user['UserName']}")
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "Unknown")
+            error_msg = exc.response.get("Error", {}).get("Message", str(exc))
+            print(f"Error listing users: {error_code} - {error_msg}")
+            sys.exit(1)
+
     elif args.command == "reset":
-        client.update_login_profile(
-            UserName=args.username, Password=pwd, PasswordResetRequired=True
-        )
-        print("Password has been reset for:", args.username)
-        print("Login with temp password:")
-        print(pwd)
-        print("Password reset will be enforced upon initial login")
+        pwd = passwordgen()
+        try:
+            # First check if user exists
+            client.get_user(UserName=args.username)
+
+            # Check if login profile exists
+            try:
+                client.get_login_profile(UserName=args.username)
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] == "NoSuchEntity":
+                    print(
+                        f"Error: User '{args.username}' does not have a login profile."
+                    )
+                    print("Use 'profile' command to create a login profile first.")
+                    sys.exit(1)
+                else:
+                    raise
+
+            # Update the password
+            client.update_login_profile(
+                UserName=args.username, Password=pwd, PasswordResetRequired=True
+            )
+            print(f"✓ Password has been reset for: {args.username}")
+            print("\nLogin with temporary password:")
+            print(f"  {pwd}")
+            print("\n⚠️  Password reset will be enforced upon initial login")
+
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "Unknown")
+            error_msg = exc.response.get("Error", {}).get("Message", str(exc))
+
+            if error_code == "NoSuchEntity":
+                print(f"Error: User '{args.username}' does not exist.")
+            elif error_code == "PasswordPolicyViolation":
+                print("Error: Generated password violates account password policy.")
+                print(f"Details: {error_msg}")
+            elif error_code == "AccessDenied":
+                print(
+                    "Error: Access denied. You need IAM user administration permissions."
+                )
+            elif error_code == "LimitExceeded":
+                print("Error: Password change limit exceeded. Try again later.")
+            else:
+                print(
+                    f"Error resetting password for {args.username}: {error_code} - {error_msg}"
+                )
+
+            sys.exit(1)
+
     elif args.command == "profile":
-        client.create_login_profile(
-            UserName=args.username, Password=pwd, PasswordResetRequired=True
-        )
-        print("New login profile has been created for:", args.username)
-        print("Login with temp password:")
-        print(pwd)
-        print("Password reset will be enforced upon initial login")
+        pwd = passwordgen()
+        try:
+            # First check if user exists
+            client.get_user(UserName=args.username)
+
+            # Check if login profile already exists
+            try:
+                client.get_login_profile(UserName=args.username)
+                print(f"Error: Login profile already exists for '{args.username}'.")
+                print("Use 'reset' command to reset an existing password.")
+                sys.exit(1)
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] != "NoSuchEntity":
+                    raise
+
+            # Create the login profile
+            client.create_login_profile(
+                UserName=args.username, Password=pwd, PasswordResetRequired=True
+            )
+            print(f"✓ New login profile has been created for: {args.username}")
+            print("\nLogin with temporary password:")
+            print(f"  {pwd}")
+            print("\n⚠️  Password reset will be enforced upon initial login")
+
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code", "Unknown")
+            error_msg = exc.response.get("Error", {}).get("Message", str(exc))
+
+            if error_code == "NoSuchEntity":
+                print(f"Error: User '{args.username}' does not exist.")
+            elif error_code == "EntityAlreadyExists":
+                print(f"Error: Login profile already exists for '{args.username}'.")
+                print("Use 'reset' command instead.")
+            elif error_code == "PasswordPolicyViolation":
+                print("Error: Generated password violates account password policy.")
+                print(f"Details: {error_msg}")
+            elif error_code == "AccessDenied":
+                print(
+                    "Error: Access denied. You need IAM user administration permissions."
+                )
+            elif error_code == "LimitExceeded":
+                print("Error: Account limit exceeded for login profiles.")
+            else:
+                print(
+                    f"Error creating profile for {args.username}: {error_code} - {error_msg}"
+                )
+
+            sys.exit(1)
+    else:
+        parser = argparse.ArgumentParser()
+        parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
