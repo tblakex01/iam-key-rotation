@@ -86,7 +86,7 @@ class TestLambdaHandler(unittest.TestCase):
         os.environ,
         {
             "WARNING_THRESHOLD": "75",
-            "URGENT_THRESHOLD": "85", 
+            "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
             "AUTO_DISABLE": "false",
             "SENDER_EMAIL": "test@example.com",
@@ -97,10 +97,10 @@ class TestLambdaHandler(unittest.TestCase):
         """Test Lambda execution when credential report generation times out"""
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}
-        
+
         # Mock get_credential_report to never return Content (simulating timeout)
         mock_iam.get_credential_report.return_value = {"State": "INPROGRESS"}
-        
+
         # Test event and context
         event = {}
         context = Mock()
@@ -109,7 +109,7 @@ class TestLambdaHandler(unittest.TestCase):
         # Execute handler - should raise an exception due to timeout
         with self.assertRaises(Exception) as cm:
             access_key_enforcement.lambda_handler(event, context)
-        
+
         # Verify the timeout exception message
         self.assertIn("Credential report generation timed out", str(cm.exception))
         self.assertIn("60 seconds", str(cm.exception))
@@ -119,7 +119,7 @@ class TestLambdaHandler(unittest.TestCase):
         {
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
-            "DISABLE_THRESHOLD": "90", 
+            "DISABLE_THRESHOLD": "90",
             "AUTO_DISABLE": "false",
             "SENDER_EMAIL": "test@example.com",
         },
@@ -128,18 +128,20 @@ class TestLambdaHandler(unittest.TestCase):
     @patch("access_key_enforcement.ses_client")
     @patch("access_key_enforcement.cloudwatch")
     @patch("access_key_enforcement.time.sleep")  # Mock sleep to speed up test
-    def test_lambda_handler_credential_report_retry_success(self, mock_sleep, mock_cloudwatch, mock_ses, mock_iam):
+    def test_lambda_handler_credential_report_retry_success(
+        self, mock_sleep, mock_cloudwatch, mock_ses, mock_iam
+    ):
         """Test Lambda execution when credential report succeeds after retries"""
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}
-        
+
         # Mock get_credential_report to succeed on third attempt
         mock_iam.get_credential_report.side_effect = [
             {"State": "INPROGRESS"},  # First attempt - still in progress
-            {"State": "INPROGRESS"},  # Second attempt - still in progress  
+            {"State": "INPROGRESS"},  # Second attempt - still in progress
             {  # Third attempt - success
                 "Content": b"user,arn,user_creation_time,password_enabled,password_last_used,password_last_changed,password_next_rotation,mfa_active,access_key_1_active,access_key_1_last_rotated,access_key_1_last_used_date,access_key_1_last_used_region,access_key_1_last_used_service,access_key_2_active,access_key_2_last_rotated\ntestuser,arn:aws:iam::123456789012:user/testuser,2023-01-01T00:00:00+00:00,true,N/A,2023-01-01T00:00:00+00:00,N/A,false,false,N/A,N/A,N/A,N/A,false,N/A"
-            }
+            },
         ]
 
         # Mock other required services
@@ -156,7 +158,7 @@ class TestLambdaHandler(unittest.TestCase):
 
         # Verify response
         self.assertEqual(result["statusCode"], 200)
-        
+
         # Verify sleep was called twice (for the retry attempts)
         self.assertEqual(mock_sleep.call_count, 3)
 
@@ -166,7 +168,7 @@ class TestLambdaHandler(unittest.TestCase):
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
-            "AUTO_DISABLE": "false", 
+            "AUTO_DISABLE": "false",
             "SENDER_EMAIL": "test@example.com",
             "CREDENTIAL_REPORT_TIMEOUT": "10",  # Custom short timeout for testing
         },
@@ -176,10 +178,10 @@ class TestLambdaHandler(unittest.TestCase):
         """Test Lambda execution with custom credential report timeout"""
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}
-        
+
         # Mock get_credential_report to never return Content (simulating timeout)
         mock_iam.get_credential_report.return_value = {"State": "INPROGRESS"}
-        
+
         # Test event and context
         event = {}
         context = Mock()
@@ -188,7 +190,7 @@ class TestLambdaHandler(unittest.TestCase):
         # Execute handler - should raise an exception due to timeout
         with self.assertRaises(Exception) as cm:
             access_key_enforcement.lambda_handler(event, context)
-        
+
         # Verify the timeout exception message reflects custom timeout
         self.assertIn("Credential report generation timed out", str(cm.exception))
         self.assertIn("10 seconds", str(cm.exception))

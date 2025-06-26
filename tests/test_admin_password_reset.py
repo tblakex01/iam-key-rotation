@@ -50,7 +50,7 @@ class TestClientCreation(unittest.TestCase):
 
         # Verify session created without profile/region
         mock_session_class.assert_called_once_with()
-        mock_session.client.assert_called_once_with('iam')
+        mock_session.client.assert_called_once_with("iam")
         self.assertEqual(result, mock_client)
 
     @patch("aws_iam_user_password_reset.boto3.Session")
@@ -65,7 +65,7 @@ class TestClientCreation(unittest.TestCase):
 
         # Verify session created with profile
         mock_session_class.assert_called_once_with(profile_name="test-profile")
-        mock_session.client.assert_called_once_with('iam')
+        mock_session.client.assert_called_once_with("iam")
         self.assertEqual(result, mock_client)
 
     @patch("aws_iam_user_password_reset.boto3.Session")
@@ -80,7 +80,7 @@ class TestClientCreation(unittest.TestCase):
 
         # Verify session created with region
         mock_session_class.assert_called_once_with(region_name="us-west-2")
-        mock_session.client.assert_called_once_with('iam', region_name="us-west-2")
+        mock_session.client.assert_called_once_with("iam", region_name="us-west-2")
         self.assertEqual(result, mock_client)
 
 
@@ -96,7 +96,7 @@ class TestErrorHandling(unittest.TestCase):
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock user not found
         error_response = {
             "Error": {"Code": "NoSuchEntity", "Message": "User not found"}
@@ -105,7 +105,7 @@ class TestErrorHandling(unittest.TestCase):
 
         # Mock sys.exit to raise an exception to stop execution
         mock_exit.side_effect = SystemExit(1)
-        
+
         # Mock command line args
         with patch("sys.argv", ["script", "reset", "-u", "nonexistent"]):
             with self.assertRaises(SystemExit):
@@ -123,7 +123,7 @@ class TestErrorHandling(unittest.TestCase):
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock successful get_user
         mock_client.get_user.return_value = {"User": {"UserName": "testuser"}}
 
@@ -137,7 +137,7 @@ class TestErrorHandling(unittest.TestCase):
 
         # Mock sys.exit to raise an exception to stop execution
         mock_exit.side_effect = SystemExit(1)
-        
+
         # Mock command line args
         with patch("sys.argv", ["script", "reset", "-u", "testuser"]):
             with self.assertRaises(SystemExit):
@@ -149,14 +149,16 @@ class TestErrorHandling(unittest.TestCase):
     @patch("aws_iam_user_password_reset.get_iam_client")
     @patch("sys.exit")
     @patch("builtins.print")
-    def test_reset_password_policy_violation(self, mock_print, mock_exit, mock_get_client):
+    def test_reset_password_policy_violation(
+        self, mock_print, mock_exit, mock_get_client
+    ):
         """Test reset command with password policy violation"""
         from botocore.exceptions import ClientError
 
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock successful get_user and get_login_profile
         mock_client.get_user.return_value = {"User": {"UserName": "testuser"}}
         mock_client.get_login_profile.return_value = {"LoginProfile": {}}
@@ -190,7 +192,7 @@ class TestErrorHandling(unittest.TestCase):
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock successful get_user
         mock_client.get_user.return_value = {"User": {"UserName": "testuser"}}
 
@@ -214,7 +216,7 @@ class TestErrorHandling(unittest.TestCase):
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock access denied
         error_response = {
             "Error": {"Code": "AccessDenied", "Message": "User is not authorized"}
@@ -238,7 +240,7 @@ class TestErrorHandling(unittest.TestCase):
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock successful operations
         mock_client.get_user.return_value = {"User": {"UserName": "testuser"}}
         mock_client.get_login_profile.return_value = {"LoginProfile": {}}
@@ -260,7 +262,7 @@ class TestErrorHandling(unittest.TestCase):
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock successful get_user
         mock_client.get_user.return_value = {"User": {"UserName": "testuser"}}
 
@@ -287,7 +289,7 @@ class TestErrorHandling(unittest.TestCase):
         """Test error during client initialization"""
         # Mock client initialization failure
         mock_get_client.side_effect = Exception("AWS configuration error")
-        
+
         # Mock sys.exit to raise an exception to stop execution
         mock_exit.side_effect = SystemExit(1)
 
@@ -298,7 +300,9 @@ class TestErrorHandling(unittest.TestCase):
 
         # Verify error handling
         mock_exit.assert_called_with(1)
-        mock_print.assert_any_call("Error initializing AWS client: AWS configuration error")
+        mock_print.assert_any_call(
+            "Error initializing AWS client: AWS configuration error"
+        )
 
 
 class TestListUsers(unittest.TestCase):
@@ -311,7 +315,7 @@ class TestListUsers(unittest.TestCase):
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock IAM response
         mock_client.list_users.return_value = {
             "Users": [
@@ -338,7 +342,7 @@ class TestListUsers(unittest.TestCase):
         # Setup mock client
         mock_client = Mock()
         mock_get_client.return_value = mock_client
-        
+
         # Mock empty response
         mock_client.list_users.return_value = {"Users": []}
 
@@ -355,9 +359,19 @@ class TestArgumentParsing(unittest.TestCase):
 
     def test_parse_args_with_profile_and_region(self):
         """Test parsing arguments with profile and region"""
-        with patch("sys.argv", ["script", "--profile", "test-profile", "--region", "us-west-2", "list-users"]):
+        with patch(
+            "sys.argv",
+            [
+                "script",
+                "--profile",
+                "test-profile",
+                "--region",
+                "us-west-2",
+                "list-users",
+            ],
+        ):
             args = admin_reset.parse_args()
-            
+
         self.assertEqual(args.profile, "test-profile")
         self.assertEqual(args.region, "us-west-2")
         self.assertEqual(args.command, "list-users")
@@ -366,7 +380,7 @@ class TestArgumentParsing(unittest.TestCase):
         """Test parsing reset command arguments"""
         with patch("sys.argv", ["script", "reset", "-u", "testuser"]):
             args = admin_reset.parse_args()
-            
+
         self.assertEqual(args.command, "reset")
         self.assertEqual(args.username, "testuser")
         self.assertIsNone(args.profile)

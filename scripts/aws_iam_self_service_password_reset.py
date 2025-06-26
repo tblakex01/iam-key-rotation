@@ -234,9 +234,7 @@ def main():
 
         # Attempt password change
         rprint("\n[blue]Changing password...[/blue]")
-        client.change_password(
-            OldPassword=current_password, NewPassword=new_password
-        )
+        client.change_password(OldPassword=current_password, NewPassword=new_password)
 
         # Success! Display new password securely
         secure_password_display(new_password)

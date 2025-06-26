@@ -117,8 +117,12 @@ def run_security_checks():
     python_files = list(project_root.rglob("*.py"))
 
     for file_path in python_files:
-        if ("test" in file_path.name or "__pycache__" in str(file_path) or
-                "venv" in str(file_path) or ".git" in str(file_path)):
+        if (
+            "test" in file_path.name
+            or "__pycache__" in str(file_path)
+            or "venv" in str(file_path)
+            or ".git" in str(file_path)
+        ):
             continue
 
         try:
@@ -131,8 +135,7 @@ def run_security_checks():
                         lines = content.split("\n")
                         for i, line in enumerate(lines):
                             if pattern in line and not line.strip().startswith("#"):
-                                if ("example" not in line and
-                                        "placeholder" not in line):
+                                if "example" not in line and "placeholder" not in line:
                                     print(f"⚠️  Potential secret in {file_path}:{i + 1}")
                                     secrets_found = True
                                     break
@@ -164,7 +167,7 @@ def main():
 
     # Generate coverage report if coverage.py is available
     try:
-        __import__('coverage')
+        __import__("coverage")
         print("\n📈 Coverage analysis available")
         print("Run with: coverage run tests/run_tests.py && coverage report")
     except ImportError:
