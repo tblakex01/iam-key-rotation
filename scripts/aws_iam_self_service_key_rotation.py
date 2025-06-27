@@ -31,10 +31,16 @@ console = Console()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Session cache for performance
+_session = None
+
 
 def get_iam_client():
     """Get or create IAM client"""
-    return boto3.client("iam")
+    global _session
+    if _session is None:
+        _session = boto3.Session()
+    return _session.client("iam")
 
 
 def parse_args():
@@ -264,15 +270,16 @@ def main():
                     "\n[yellow]Credentials file not updated. Manual configuration required.[/yellow]"
                 )
 
-        except get_iam_client().exceptions.LimitExceededException:
-            rprint(
-                "[red]Error:[/red] Access key limit exceeded (maximum 2 keys per user)"
-            )
-            rprint("Delete an existing key before creating a new one:")
-            list_keys_table()
         except ClientError as e:
-            logger.error(f"Error creating access key: {e}")
-            rprint(f"[red]Error:[/red] {e}")
+            if e.response["Error"]["Code"] == "LimitExceeded":
+                rprint(
+                    "[red]Error:[/red] Access key limit exceeded (maximum 2 keys per user)"
+                )
+                rprint("Delete an existing key before creating a new one:")
+                list_keys_table()
+            else:
+                logger.error(f"Error creating access key: {e}")
+                rprint(f"[red]Error:[/red] {e}")
     elif args.update:
         key_id = args.update[0]
         status = args.update[1].lower()
