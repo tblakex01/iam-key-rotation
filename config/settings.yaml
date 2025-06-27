@@ -1,5 +1,10 @@
 # IAM Key Rotation and Security Policy Configuration
 # This file defines the security policies and thresholds for IAM management
+#
+# IMPORTANT: Configure sender_email for your organization
+# - Set SES_SENDER environment variable, OR
+# - Update sender_email in environment-specific overrides below
+# - Default uses placeholder domain to prevent accidental emails
 
 # Access Key Rotation Policy
 access_key_policy:
@@ -40,8 +45,8 @@ mfa_policy:
 
 # Notification Settings
 notifications:
-  # Email settings
-  sender_email: "cloud-admins@jennasrunbooks.com"
+  # Email settings (configure via SES_SENDER environment variable or environment overrides)
+  sender_email: "${SES_SENDER:-admin@example.com}"
   
   # Notification frequency
   daily_digest: true        # Send daily compliance digest
@@ -100,16 +105,23 @@ environments:
     
     notifications:
       immediate_alerts: false
+      sender_email: "dev-alerts@your-domain.com"  # Configure for your organization
   
   staging:
     access_key_policy:
       auto_disable: false
       disable_threshold: 100
+    
+    notifications:
+      sender_email: "staging-alerts@your-domain.com"  # Configure for your organization
   
   production:
     access_key_policy:
       auto_disable: true      # Strict enforcement in prod
       disable_threshold: 90
+    
+    notifications:
+      sender_email: "security-alerts@your-domain.com"  # Configure for your organization
     
     monitoring:
       alert_on_expired_keys: 0

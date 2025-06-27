@@ -6,6 +6,7 @@ Runs all tests and generates a comprehensive report
 
 import sys
 import unittest
+import re
 from pathlib import Path
 
 
@@ -79,13 +80,16 @@ def run_tests():
 
 def check_dependencies():
     """Check if all required test dependencies are installed"""
-    required_packages = ["boto3", "botocore", "rich", "dateutil"]
+    required_packages = ["boto3", "botocore", "rich", "python-dateutil"]
 
     missing_packages = []
 
     for package in required_packages:
         try:
-            __import__(package.replace("-", "_"))
+            if package == "python-dateutil":
+                __import__("dateutil")
+            else:
+                __import__(package.replace("-", "_"))
         except ImportError:
             missing_packages.append(package)
 
@@ -111,8 +115,13 @@ def run_security_checks():
     # Get project root
     project_root = Path(__file__).parent.parent
 
-    # Patterns to look for
-    secret_patterns = ["AKIA", "password", "secret", "token"]  # AWS Access Key ID
+    # Patterns to look for (more specific to reduce false positives)
+    secret_patterns = [
+        r"AKIA[0-9A-Z]{16}",  # AWS Access Key ID pattern
+        r"['\"][A-Za-z0-9/+=]{40}['\"]",  # AWS Secret Access Key pattern
+        r"password\s*=\s*['\"][^'\"]+['\"]",  # password assignment
+        r"token\s*=\s*['\"][^'\"]+['\"]",  # token assignment
+    ]
 
     python_files = list(project_root.rglob("*.py"))
 
@@ -127,18 +136,26 @@ def run_security_checks():
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read().lower()
+                content = f.read()
+                lines = content.split("\n")
 
                 for pattern in secret_patterns:
-                    if pattern in content and "example" not in content:
-                        # Additional checks to avoid false positives
-                        lines = content.split("\n")
-                        for i, line in enumerate(lines):
-                            if pattern in line and not line.strip().startswith("#"):
-                                if "example" not in line and "placeholder" not in line:
-                                    print(f"⚠️  Potential secret in {file_path}:{i + 1}")
-                                    secrets_found = True
-                                    break
+                    compiled_pattern = re.compile(pattern, re.IGNORECASE)
+                    for i, line in enumerate(lines):
+                        # Skip comments and lines with obvious placeholders
+                        if (
+                            line.strip().startswith("#")
+                            or "example" in line.lower()
+                            or "placeholder" in line.lower()
+                            or "test" in line.lower()
+                            or "dummy" in line.lower()
+                        ):
+                            continue
+
+                        if compiled_pattern.search(line):
+                            print(f"⚠️  Potential secret in {file_path}:{i + 1}")
+                            print(f"    Line: {line.strip()}")
+                            secrets_found = True
         except Exception as e:
             print(f"⚠️  Could not scan {file_path}: {e}")
 

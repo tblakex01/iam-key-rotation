@@ -8,6 +8,8 @@ import os
 import time
 import json
 import logging
+import csv
+import io
 from datetime import datetime
 from dateutil import parser
 import boto3
@@ -41,9 +43,11 @@ def lambda_handler(event, context):  # noqa: ARG001
 
         # Wait for report generation with timeout
         timeout_seconds = int(os.environ.get("CREDENTIAL_REPORT_TIMEOUT", "60"))
-        max_attempts = timeout_seconds // 2  # Convert seconds to attempts (2 sec intervals)
+        max_attempts = (
+            timeout_seconds // 2
+        )  # Convert seconds to attempts (2 sec intervals)
         attempt = 0
-        
+
         while True:
             attempt += 1
             if attempt > max_attempts:
@@ -55,13 +59,15 @@ def lambda_handler(event, context):  # noqa: ARG001
                     f"Credential report generation timed out after {timeout_seconds} seconds. "
                     "AWS may be experiencing issues or the account has too many users."
                 )
-            
+
             time.sleep(2)
             response = iam_client.get_credential_report()
             if "Content" in response:
-                logger.info(f"Credential report generated successfully after {attempt * 2} seconds")
+                logger.info(
+                    f"Credential report generated successfully after {attempt * 2} seconds"
+                )
                 break
-                
+
     except ClientError as e:
         logger.error(f"Error generating credential report: {e}")
         raise
@@ -81,11 +87,13 @@ def lambda_handler(event, context):  # noqa: ARG001
     # Process each user
     notifications = []
 
-    for line in credential_report.split("\n")[1:]:  # Skip header
-        if not line:
+    csv_reader = csv.reader(io.StringIO(credential_report))
+    next(csv_reader)  # Skip header
+
+    for fields in csv_reader:
+        if not fields:
             continue
 
-        fields = line.split(",")
         username = fields[0]
 
         # Check if user is exempt
@@ -304,12 +312,10 @@ def send_notification(notification):
             </li>
             <li>Update your applications with the new key</li>
             <li>Deactivate the old key:
-                <pre>python3 aws_iam_self_service_key_rotation.py \
-                     -u {key_id} inactive</pre>
+                <pre>python3 aws_iam_self_service_key_rotation.py -u {key_id} inactive</pre>
             </li>
             <li>After confirming everything works, delete the old key:
-                <pre>python3 aws_iam_self_service_key_rotation.py \
-                     -d {key_id}</pre>
+                <pre>python3 aws_iam_self_service_key_rotation.py -d {key_id}</pre>
             </li>
         </ol>
 

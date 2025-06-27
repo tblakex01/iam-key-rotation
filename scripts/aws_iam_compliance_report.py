@@ -14,6 +14,7 @@ import csv
 import io
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,16 @@ console = Console()
 class IAMComplianceReport:
     """IAM Compliance Report Generator"""
 
+    # Configurable compliance thresholds via environment variables
+    KEY_WARNING_THRESHOLD = int(os.environ.get("KEY_WARNING_THRESHOLD", "75"))
+    KEY_NON_COMPLIANT_THRESHOLD = int(
+        os.environ.get("KEY_NON_COMPLIANT_THRESHOLD", "90")
+    )
+    PASSWORD_WARNING_THRESHOLD = int(os.environ.get("PASSWORD_WARNING_THRESHOLD", "75"))
+    PASSWORD_NON_COMPLIANT_THRESHOLD = int(
+        os.environ.get("PASSWORD_NON_COMPLIANT_THRESHOLD", "90")
+    )
+
     def __init__(self):
         self.users_data = []
         self.summary_stats = {
@@ -57,25 +68,35 @@ class IAMComplianceReport:
             iam_client.generate_credential_report()
 
             # Wait for report generation with progress bar
+            max_attempts = 30  # 60 seconds timeout
+            attempt = 0
+
             with Progress(
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
                 console=console,
             ) as progress:
-                task = progress.add_task("Waiting for report generation...", total=100)
+                task = progress.add_task(
+                    "Waiting for report generation...", total=max_attempts
+                )
 
-                while not progress.finished:
+                while attempt < max_attempts:
+                    attempt += 1
                     time.sleep(2)
-                    progress.update(task, advance=20)
+                    progress.update(task, advance=1)
 
                     try:
                         response = iam_client.get_credential_report()
                         if "Content" in response:
-                            progress.update(task, completed=100)
+                            progress.update(task, completed=max_attempts)
                             break
                     except ClientError:
                         continue
+                else:
+                    raise TimeoutError(
+                        "Credential report generation timed out after 60 seconds"
+                    )
 
             return response["Content"].decode("utf-8")
 
@@ -88,10 +109,10 @@ class IAMComplianceReport:
         rprint("[blue]Parsing credential report...[/blue]")
 
         csv_reader = csv.reader(io.StringIO(report_csv))
-        header = next(csv_reader)  # Skip header
-        
+        next(csv_reader)  # Skip header
+
         for fields in csv_reader:
-            if len(fields) < 15:  # Ensure we have enough fields
+            if len(fields) < 18:  # Ensure we have enough fields
                 continue
 
             user_data = self.parse_user_data(fields)
@@ -201,9 +222,9 @@ class IAMComplianceReport:
         """Get compliance status for access key based on age"""
         if age is None:
             return "N/A"
-        elif age >= 90:
+        elif age >= self.KEY_NON_COMPLIANT_THRESHOLD:
             return "NON_COMPLIANT"
-        elif age >= 75:
+        elif age >= self.KEY_WARNING_THRESHOLD:
             return "WARNING"
         else:
             return "COMPLIANT"
@@ -212,9 +233,9 @@ class IAMComplianceReport:
         """Get compliance status for password based on age"""
         if age is None:
             return "N/A"
-        elif age >= 90:
+        elif age >= self.PASSWORD_NON_COMPLIANT_THRESHOLD:
             return "NON_COMPLIANT"
-        elif age >= 78:
+        elif age >= self.PASSWORD_WARNING_THRESHOLD:
             return "WARNING"
         else:
             return "COMPLIANT"

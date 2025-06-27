@@ -1,5 +1,9 @@
 # IAM Access Key Enforcement Lambda Function
 
+# Data sources for current region and account
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
 # Lambda execution role
 resource "aws_iam_role" "lambda_execution_role" {
   name = "iam-key-enforcement-lambda-role"
@@ -35,7 +39,10 @@ resource "aws_iam_policy" "lambda_iam_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = [
+          "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/iam-access-key-enforcement",
+          "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/iam-access-key-enforcement:*"
+        ]
       },
       {
         Effect = "Allow"

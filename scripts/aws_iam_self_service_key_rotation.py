@@ -24,13 +24,17 @@ from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
 
-client = boto3.client("iam")
 path = Path.home().joinpath(".aws/credentials")
 console = Console()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_iam_client():
+    """Get or create IAM client"""
+    return boto3.client("iam")
 
 
 def parse_args():
@@ -120,6 +124,7 @@ def backup_credentials():
 def list_keys_json():
     """List keys in JSON format"""
     try:
+        client = get_iam_client()
         response = client.list_access_keys()
         keys_data = []
 
@@ -147,6 +152,7 @@ def list_keys_json():
 def list_keys_table():
     """List keys in a formatted table"""
     try:
+        client = get_iam_client()
         response = client.list_access_keys()
 
         if not response["AccessKeyMetadata"]:
@@ -205,6 +211,7 @@ def main():
 
             # Create new key
             rprint("\n[green]Creating new access key...[/green]")
+            client = get_iam_client()
             response = client.create_access_key()
             new_key = response["AccessKey"]["AccessKeyId"]
             new_secret = response["AccessKey"]["SecretAccessKey"]
@@ -227,19 +234,19 @@ def main():
 
                 try:
                     config = configparser.ConfigParser()
-                    
+
                     # Read existing config
                     if path.exists():
                         config.read(path)
-                    
+
                     # Update default profile
-                    if 'default' not in config:
-                        config['default'] = {}
-                    config['default']['aws_access_key_id'] = new_key
-                    config['default']['aws_secret_access_key'] = new_secret
-                    
+                    if "default" not in config:
+                        config["default"] = {}
+                    config["default"]["aws_access_key_id"] = new_key
+                    config["default"]["aws_secret_access_key"] = new_secret
+
                     # Write back preserving other profiles
-                    with open(path, 'w', encoding='utf-8') as configfile:
+                    with open(path, "w", encoding="utf-8") as configfile:
                         config.write(configfile)
 
                     rprint("[green]✓[/green] Credentials file updated successfully!")
@@ -257,7 +264,7 @@ def main():
                     "\n[yellow]Credentials file not updated. Manual configuration required.[/yellow]"
                 )
 
-        except client.exceptions.LimitExceededException:
+        except get_iam_client().exceptions.LimitExceededException:
             rprint(
                 "[red]Error:[/red] Access key limit exceeded (maximum 2 keys per user)"
             )
@@ -276,6 +283,7 @@ def main():
                     f"\n[blue]Updating access key {key_id} to {status.upper()}...[/blue]"
                 )
 
+                client = get_iam_client()
                 response = client.update_access_key(
                     AccessKeyId=key_id, Status=status.capitalize()
                 )
@@ -309,6 +317,7 @@ def main():
             if confirm.lower() == "yes":
                 rprint(f"\n[blue]Deleting access key {key_id}...[/blue]")
 
+                client = get_iam_client()
                 response = client.delete_access_key(AccessKeyId=key_id)
 
                 rprint(

@@ -11,7 +11,6 @@ import argparse
 import secrets
 import string
 import sys
-import os
 import boto3
 from botocore.exceptions import ClientError
 
@@ -19,28 +18,28 @@ from botocore.exceptions import ClientError
 def get_iam_client(profile=None, region=None):
     """
     Return a boto3 IAM client with optional profile and region configuration.
-    
+
     Args:
         profile: AWS profile name (defaults to environment/default)
         region: AWS region (defaults to environment/default)
-    
+
     Returns:
         boto3 IAM client
     """
     session_kwargs = {}
     if profile:
-        session_kwargs['profile_name'] = profile
+        session_kwargs["profile_name"] = profile
     if region:
-        session_kwargs['region_name'] = region
-    
+        session_kwargs["region_name"] = region
+
     session = boto3.Session(**session_kwargs)
-    
+
     # IAM is a global service, but we still respect region for STS endpoint
     client_kwargs = {}
     if region:
-        client_kwargs['region_name'] = region
-    
-    return session.client('iam', **client_kwargs)
+        client_kwargs["region_name"] = region
+
+    return session.client("iam", **client_kwargs)
 
 
 def passwordgen():
@@ -80,39 +79,35 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="List/Reset/Create profiles for user accounts, output temp password"
     )
-    
+
     # Global options
-    parser.add_argument(
-        "--profile", type=str, help="AWS profile name to use"
-    )
-    parser.add_argument(
-        "--region", type=str, help="AWS region to use"
-    )
-    
+    parser.add_argument("--profile", type=str, help="AWS profile name to use")
+    parser.add_argument("--region", type=str, help="AWS region to use")
+
     subparser = parser.add_subparsers(dest="command", help="Available commands")
-    
+
     # List users command
     subparser.add_parser("list-users", help="List AWS IAM users")
-    
+
     # Reset password command
     reset = subparser.add_parser("reset", help="Reset a user password")
     reset.add_argument(
         "-u", "--username", type=str, required=True, help="AWS IAM Username"
     )
-    
+
     # Create profile command
     profile = subparser.add_parser("profile", help="Create user login profile")
     profile.add_argument(
         "-u", "--username", type=str, required=True, help="AWS IAM Username"
     )
-    
+
     return parser.parse_args()
 
 
 def main():
     """List, reset or create login profiles for user accounts and output temp password"""
     args = parse_args()
-    
+
     # Initialize IAM client with optional profile and region
     try:
         client = get_iam_client(profile=args.profile, region=args.region)
@@ -238,8 +233,9 @@ def main():
 
             sys.exit(1)
     else:
-        parser = argparse.ArgumentParser()
-        parser.print_help()
+        # Print help if no command provided
+        print("Error: No command specified.")
+        print("Use --help for usage information.")
         sys.exit(1)
 
 
