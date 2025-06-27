@@ -280,6 +280,9 @@ def main():
             else:
                 logger.error(f"Error creating access key: {e}")
                 rprint(f"[red]Error:[/red] {e}")
+        except Exception as e:
+            logger.error(f"Error creating access key: {e}")
+            rprint(f"[red]Error:[/red] {e}")
     elif args.update:
         key_id = args.update[0]
         status = args.update[1].lower()
