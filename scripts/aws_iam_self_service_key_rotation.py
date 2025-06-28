@@ -31,16 +31,16 @@ console = Console()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Session cache for performance
-_session = None
+# Cached IAM client for performance and easier mocking in tests
+_iam_client = None
 
 
 def get_iam_client():
-    """Get or create IAM client"""
-    global _session
-    if _session is None:
-        _session = boto3.Session()
-    return _session.client("iam")
+    """Return a boto3 IAM client, creating it if necessary."""
+    global _iam_client
+    if _iam_client is None:
+        _iam_client = boto3.client("iam")
+    return _iam_client
 
 
 def parse_args():
