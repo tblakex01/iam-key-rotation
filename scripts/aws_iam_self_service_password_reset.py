@@ -105,8 +105,8 @@ def validate_password_policy(password):
 
         return errors
 
-    except ClientError:
-        # If we can't get the password policy, assume basic requirements
+    except (ClientError, NoCredentialsError, PartialCredentialsError):
+        # If policy cannot be retrieved (e.g., no credentials), fall back to basic checks
         logger.warning("Could not retrieve password policy, using default validation")
         errors = []
         if len(password) < 8:

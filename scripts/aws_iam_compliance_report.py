@@ -29,8 +29,18 @@ from rich import print as rprint
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize AWS clients
-iam_client = boto3.client("iam")
+# Lazily initialized IAM client
+iam_client = None
+
+
+def get_iam_client():
+    """Return a boto3 IAM client, creating it if necessary."""
+    global iam_client
+    if iam_client is None:
+        iam_client = boto3.client("iam")
+    return iam_client
+
+
 console = Console()
 
 
@@ -65,7 +75,8 @@ class IAMComplianceReport:
 
         try:
             # Generate credential report
-            iam_client.generate_credential_report()
+            client = get_iam_client()
+            client.generate_credential_report()
 
             # Wait for report generation with progress bar
             max_attempts = 30  # 60 seconds timeout
@@ -87,7 +98,7 @@ class IAMComplianceReport:
                     progress.update(task, advance=1)
 
                     try:
-                        response = iam_client.get_credential_report()
+                        response = client.get_credential_report()
                         if "Content" in response:
                             progress.update(task, completed=max_attempts)
                             break
@@ -264,11 +275,12 @@ class IAMComplianceReport:
         """Get additional user information from IAM"""
         try:
             # Get user tags
-            tags_response = iam_client.list_user_tags(UserName=username)
+            client = get_iam_client()
+            tags_response = client.list_user_tags(UserName=username)
             tags = {tag["Key"]: tag["Value"] for tag in tags_response.get("Tags", [])}
 
             # Get user's access keys for more details
-            keys_response = iam_client.list_access_keys(UserName=username)
+            keys_response = client.list_access_keys(UserName=username)
             access_keys = keys_response.get("AccessKeyMetadata", [])
 
             return {
