@@ -329,35 +329,35 @@ class TestArgumentParsing(unittest.TestCase):
         with patch("sys.argv", ["script"]):
             args = compliance.parse_args()
 
-        self.assertEqual(args.format, "table")
-        self.assertIsNone(args.export)
-        self.assertFalse(args.json)
-        self.assertFalse(args.csv)
+        self.assertIsNone(args.csv)
+        self.assertIsNone(args.json)
+        self.assertFalse(args.summary_only)
+        self.assertFalse(args.quiet)
 
-    def test_parse_args_json_format(self):
-        """Test JSON format argument"""
-        with patch("sys.argv", ["script", "--json"]):
+    def test_parse_args_json_flag(self):
+        """Test JSON export argument"""
+        with patch("sys.argv", ["script", "--json", "report.json"]):
             args = compliance.parse_args()
 
-        self.assertTrue(args.json)
-        self.assertFalse(args.csv)
+        self.assertEqual(args.json, "report.json")
+        self.assertIsNone(args.csv)
 
-    def test_parse_args_export(self):
-        """Test export argument"""
-        with patch("sys.argv", ["script", "--export", "report.json"]):
+    def test_parse_args_csv_export(self):
+        """Test CSV export argument"""
+        with patch("sys.argv", ["script", "--csv", "report.csv"]):
             args = compliance.parse_args()
 
-        self.assertEqual(args.export, "report.json")
+        self.assertEqual(args.csv, "report.csv")
 
-    def test_parse_args_format_and_export(self):
-        """Test combined format and export arguments"""
+    def test_parse_args_csv_and_json(self):
+        """Test combined CSV and JSON export arguments"""
         with patch(
-            "sys.argv", ["script", "--format", "csv", "--export", "report.csv"]
+            "sys.argv", ["script", "--csv", "report.csv", "--json", "report.json"]
         ):
             args = compliance.parse_args()
 
-        self.assertEqual(args.format, "csv")
-        self.assertEqual(args.export, "report.csv")
+        self.assertEqual(args.csv, "report.csv")
+        self.assertEqual(args.json, "report.json")
 
 
 class TestMainFunction(unittest.TestCase):
@@ -369,10 +369,10 @@ class TestMainFunction(unittest.TestCase):
         """Test main with table display"""
         # Mock arguments
         mock_args = Mock()
-        mock_args.format = "table"
-        mock_args.json = False
-        mock_args.csv = False
-        mock_args.export = None
+        mock_args.json = None
+        mock_args.csv = None
+        mock_args.summary_only = False
+        mock_args.quiet = False
         mock_parse_args.return_value = mock_args
 
         # Mock report instance
@@ -394,10 +394,10 @@ class TestMainFunction(unittest.TestCase):
         """Test main with JSON export"""
         # Mock arguments
         mock_args = Mock()
-        mock_args.format = "json"
-        mock_args.json = True
-        mock_args.csv = False
-        mock_args.export = "report.json"
+        mock_args.json = "report.json"
+        mock_args.csv = None
+        mock_args.summary_only = False
+        mock_args.quiet = False
         mock_parse_args.return_value = mock_args
 
         # Mock report instance
@@ -420,10 +420,10 @@ class TestMainFunction(unittest.TestCase):
         """Test main with error handling"""
         # Mock arguments
         mock_args = Mock()
-        mock_args.format = "table"
-        mock_args.json = False
-        mock_args.csv = False
-        mock_args.export = None
+        mock_args.json = None
+        mock_args.csv = None
+        mock_args.summary_only = False
+        mock_args.quiet = False
         mock_parse_args.return_value = mock_args
 
         # Mock report instance to raise error

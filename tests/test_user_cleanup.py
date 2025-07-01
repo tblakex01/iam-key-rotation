@@ -121,6 +121,12 @@ class TestDeleteLoginProfile(unittest.TestCase):
     def test_delete_login_profile_error(self, mock_print, mock_client):
         """Test login profile deletion with error"""
         mock_client.delete_login_profile.side_effect = Exception("Access denied")
+        # Ensure NoSuchEntityException attribute exists and is a proper Exception
+        mock_client.exceptions.NoSuchEntityException = type(
+            "NoSuchEntityException",
+            (Exception,),
+            {},
+        )
 
         result = cleanup.delete_login_profile("testuser")
 
