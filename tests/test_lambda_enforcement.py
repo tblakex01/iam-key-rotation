@@ -10,6 +10,9 @@ import os
 import json
 from datetime import datetime, timedelta
 
+# Ensure boto3 client creation does not fail due to missing region
+os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+
 # Add the lambda directory to the path
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "lambda", "access_key_enforcement")
@@ -93,7 +96,8 @@ class TestLambdaHandler(unittest.TestCase):
         },
     )
     @patch("access_key_enforcement.iam_client")
-    def test_lambda_handler_credential_report_timeout(self, mock_iam):
+    @patch("access_key_enforcement.time.sleep")
+    def test_lambda_handler_credential_report_timeout(self, mock_sleep, mock_iam):
         """Test Lambda execution when credential report generation times out"""
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}

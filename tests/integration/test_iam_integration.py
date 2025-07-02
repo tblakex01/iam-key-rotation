@@ -336,15 +336,15 @@ class TestAWSIAMComplianceReport(unittest.TestCase):
         )
         csv_row1 = (
             'testuser,"arn:aws:iam::000000000000:user/testuser",2023-01-01T00:00:00Z,'
-            'true,2024-01-01T00:00:00Z,2023-01-01T00:00:00Z,N/A,true,true,'
+            "true,2024-01-01T00:00:00Z,2023-01-01T00:00:00Z,N/A,true,true,"
             '2023-01-01T00:00:00Z,2024-01-01T00:00:00Z,"us-east-1,us-west-2",s3,'
-            'false,N/A,N/A,N/A,N/A'
+            "false,N/A,N/A,N/A,N/A"
         )
         csv_row2 = (
             '"user,with,commas","arn:aws:iam::000000000000:user/user,with,commas",'
-            '2023-01-01T00:00:00Z,true,2024-01-01T00:00:00Z,2023-01-01T00:00:00Z,N/A,'
-            'false,true,2023-01-01T00:00:00Z,2024-01-01T00:00:00Z,eu-west-1,ec2,'
-            'false,N/A,N/A,N/A,N/A'
+            "2023-01-01T00:00:00Z,true,2024-01-01T00:00:00Z,2023-01-01T00:00:00Z,N/A,"
+            "false,true,2023-01-01T00:00:00Z,2024-01-01T00:00:00Z,eu-west-1,ec2,"
+            "false,N/A,N/A,N/A,N/A"
         )
         csv_content = f"{csv_header}\n{csv_row1}\n{csv_row2}\n"
 

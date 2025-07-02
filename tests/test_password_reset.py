@@ -18,16 +18,26 @@ import aws_iam_self_service_password_reset as pwd_reset  # noqa: E402
 class TestPasswordGeneration(unittest.TestCase):
     """Test password generation functionality"""
 
-    def test_passwordgen_length(self):
+    @patch("aws_iam_self_service_password_reset.boto3.client")
+    def test_passwordgen_length(self, mock_boto_client):
         """Test that generated passwords have correct length"""
+        mock_client = Mock()
+        mock_boto_client.return_value = mock_client
+        mock_client.get_account_password_policy.return_value = {"PasswordPolicy": {}}
+
         password = pwd_reset.passwordgen(20)
         self.assertEqual(len(password), 20)
 
         password = pwd_reset.passwordgen(30)
         self.assertEqual(len(password), 30)
 
-    def test_passwordgen_character_requirements(self):
+    @patch("aws_iam_self_service_password_reset.boto3.client")
+    def test_passwordgen_character_requirements(self, mock_boto_client):
         """Test that generated passwords meet character requirements"""
+        mock_client = Mock()
+        mock_boto_client.return_value = mock_client
+        mock_client.get_account_password_policy.return_value = {"PasswordPolicy": {}}
+
         password = pwd_reset.passwordgen(20)
 
         # Check for uppercase letters
@@ -42,16 +52,26 @@ class TestPasswordGeneration(unittest.TestCase):
         # Check for symbols
         self.assertTrue(any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password))
 
-    def test_passwordgen_excludes_ambiguous(self):
+    @patch("aws_iam_self_service_password_reset.boto3.client")
+    def test_passwordgen_excludes_ambiguous(self, mock_boto_client):
         """Test that ambiguous characters are excluded when requested"""
+        mock_client = Mock()
+        mock_boto_client.return_value = mock_client
+        mock_client.get_account_password_policy.return_value = {"PasswordPolicy": {}}
+
         password = pwd_reset.passwordgen(50, exclude_ambiguous=True)
         ambiguous = "0O1lI"
 
         for char in ambiguous:
             self.assertNotIn(char, password)
 
-    def test_passwordgen_uniqueness(self):
+    @patch("aws_iam_self_service_password_reset.boto3.client")
+    def test_passwordgen_uniqueness(self, mock_boto_client):
         """Test that multiple calls generate different passwords"""
+        mock_client = Mock()
+        mock_boto_client.return_value = mock_client
+        mock_client.get_account_password_policy.return_value = {"PasswordPolicy": {}}
+
         passwords = [pwd_reset.passwordgen(20) for _ in range(10)]
 
         # All passwords should be unique
