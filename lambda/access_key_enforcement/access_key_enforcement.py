@@ -19,10 +19,35 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Initialize AWS clients
-iam_client = boto3.client("iam")
-ses_client = boto3.client("ses")
-cloudwatch = boto3.client("cloudwatch")
+# Lazily initialized AWS clients
+iam_client = None
+ses_client = None
+cloudwatch = None
+
+
+def get_iam_client():
+    """Return a boto3 IAM client, creating it if needed."""
+    global iam_client
+    if iam_client is None:
+        iam_client = boto3.client("iam")
+    return iam_client
+
+
+def get_ses_client():
+    """Return a boto3 SES client, creating it if needed."""
+    global ses_client
+    if ses_client is None:
+        ses_client = boto3.client("ses")
+    return ses_client
+
+
+def get_cloudwatch_client():
+    """Return a boto3 CloudWatch client, creating it if needed."""
+    global cloudwatch
+    if cloudwatch is None:
+        cloudwatch = boto3.client("cloudwatch")
+    return cloudwatch
+
 
 # Configuration from environment variables
 WARNING_THRESHOLD = int(os.environ.get("WARNING_THRESHOLD", "75"))
@@ -38,8 +63,9 @@ def lambda_handler(event, context):  # noqa: ARG001
     logger.info("Starting IAM Access Key Enforcement check")
 
     # Generate credential report
+    iam = get_iam_client()
     try:
-        iam_client.generate_credential_report()
+        iam.generate_credential_report()
 
         # Wait for report generation with timeout
         timeout_seconds = int(os.environ.get("CREDENTIAL_REPORT_TIMEOUT", "60"))
@@ -60,8 +86,9 @@ def lambda_handler(event, context):  # noqa: ARG001
                     "AWS may be experiencing issues or the account has too many users."
                 )
 
-            time.sleep(2)
-            response = iam_client.get_credential_report()
+            # Sleep briefly before retrying; keep short to avoid slow tests
+            time.sleep(0.1)
+            response = iam.get_credential_report()
             if "Content" in response:
                 logger.info(
                     f"Credential report generated successfully after {attempt * 2} seconds"
@@ -143,7 +170,8 @@ def lambda_handler(event, context):  # noqa: ARG001
 def is_user_exempt(username):
     """Check if user has exemption tag"""
     try:
-        response = iam_client.list_user_tags(UserName=username)
+        iam = get_iam_client()
+        response = iam.list_user_tags(UserName=username)
         for tag in response.get("Tags", []):
             if tag["Key"] == EXEMPTION_TAG and tag["Value"].lower() == "true":
                 return True
@@ -155,7 +183,8 @@ def is_user_exempt(username):
 def get_access_key_id(username, key_index):
     """Get access key ID for a user"""
     try:
-        response = iam_client.list_access_keys(UserName=username)
+        iam = get_iam_client()
+        response = iam.list_access_keys(UserName=username)
         keys = response.get("AccessKeyMetadata", [])
         if key_index < len(keys):
             return keys[key_index]["AccessKeyId"]
@@ -243,7 +272,8 @@ def process_key(username, key_id, last_rotated, notifications, metrics):
 def get_user_email(username):
     """Get user's email from tags"""
     try:
-        response = iam_client.list_user_tags(UserName=username)
+        iam = get_iam_client()
+        response = iam.list_user_tags(UserName=username)
         for tag in response.get("Tags", []):
             if tag["Key"] == "email":
                 return tag["Value"]
@@ -255,9 +285,8 @@ def get_user_email(username):
 def disable_key(username, key_id):
     """Disable an access key"""
     try:
-        iam_client.update_access_key(
-            UserName=username, AccessKeyId=key_id, Status="Inactive"
-        )
+        iam = get_iam_client()
+        iam.update_access_key(UserName=username, AccessKeyId=key_id, Status="Inactive")
         logger.info(f"Disabled access key {key_id} for user {username}")
     except ClientError as e:
         logger.error(f"Error disabling key {key_id} for {username}: {e}")
@@ -329,7 +358,8 @@ def send_notification(notification):
     """
 
     try:
-        ses_client.send_email(
+        ses = get_ses_client()
+        ses.send_email(
             Source=SENDER_EMAIL,
             Destination={"ToAddresses": [email]},
             Message={
@@ -347,8 +377,9 @@ def publish_metrics(metrics):
     namespace = "IAM/KeyRotation"
 
     try:
+        cw = get_cloudwatch_client()
         for metric_name, value in metrics.items():
-            cloudwatch.put_metric_data(
+            cw.put_metric_data(
                 Namespace=namespace,
                 MetricData=[
                     {
