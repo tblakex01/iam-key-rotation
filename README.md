@@ -324,7 +324,7 @@ coverage html  # Generate HTML report
 bandit -r scripts/ lambda/
 
 # Check for hardcoded secrets
-pytest -m integration --collect-only  # Triggers security fixtures
+pytest -m integration --collect-only  # Lists integration tests without executing them or their fixtures
 ```
 
 ### 🏗️ CI/CD Pipeline
