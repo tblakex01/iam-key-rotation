@@ -309,10 +309,10 @@ aws iam tag-user \
 
 ```bash
 # Run comprehensive test suite
-python tests/run_tests.py
+pytest
 
 # Run with coverage analysis
-coverage run tests/run_tests.py
+coverage run -m pytest
 coverage report
 coverage html  # Generate HTML report
 ```
@@ -324,7 +324,7 @@ coverage html  # Generate HTML report
 bandit -r scripts/ lambda/
 
 # Check for hardcoded secrets
-python tests/run_tests.py  # Includes security checks
+pytest -m integration --collect-only  # Triggers security fixtures
 ```
 
 ### 🏗️ CI/CD Pipeline
@@ -442,7 +442,7 @@ source venv/bin/activate
 pip install -r scripts/requirements.txt
 
 # Run tests before submitting
-python tests/run_tests.py
+pytest
 ```
 
 ### 📋 Pull Request Process

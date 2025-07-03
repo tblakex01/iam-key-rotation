@@ -24,7 +24,7 @@ pip install -r tests/requirements.txt
 
 # Run tests
 echo "Running integration tests..."
-pytest tests/integration/test_iam_integration.py -v --cov=scripts --cov-report=term-missing
+pytest -m integration -v --cov=scripts --cov-report=term-missing
 
 # Generate HTML coverage report
 echo "Generating coverage report..."
