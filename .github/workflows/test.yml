@@ -63,7 +63,7 @@ jobs:
     - name: Run unit tests
       run: |
         source venv/bin/activate
-        python tests/run_tests.py
+        pytest
 
     - name: Test Lambda package creation
       run: |

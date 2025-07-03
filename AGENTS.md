@@ -34,13 +34,13 @@ For any pull request that modifies application code (Python or Terraform), run t
    ```bash
    bandit -r scripts/ lambda/
    ```
-6. **Unit tests** – execute the test suite
+6. **Unit tests** – execute the test suite with `pytest`
    ```bash
-   python tests/run_tests.py
+   pytest
    ```
-7. **Integration tests** – when applicable, run integration tests
+7. **Integration tests** – when applicable, run tests in the integration folder
    ```bash
-   ./run_tests.sh
+   pytest tests/integration
    ```
 
 ### Terraform
