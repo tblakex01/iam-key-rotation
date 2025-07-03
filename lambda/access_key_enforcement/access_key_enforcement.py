@@ -12,42 +12,12 @@ import csv
 import io
 from datetime import datetime
 from dateutil import parser
-import boto3
 from botocore.exceptions import ClientError
+from utils.aws_clients import get_iam_client, get_ses_client, get_cloudwatch_client
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
-# Lazily initialized AWS clients
-iam_client = None
-ses_client = None
-cloudwatch = None
-
-
-def get_iam_client():
-    """Return a boto3 IAM client, creating it if needed."""
-    global iam_client
-    if iam_client is None:
-        iam_client = boto3.client("iam")
-    return iam_client
-
-
-def get_ses_client():
-    """Return a boto3 SES client, creating it if needed."""
-    global ses_client
-    if ses_client is None:
-        ses_client = boto3.client("ses")
-    return ses_client
-
-
-def get_cloudwatch_client():
-    """Return a boto3 CloudWatch client, creating it if needed."""
-    global cloudwatch
-    if cloudwatch is None:
-        cloudwatch = boto3.client("cloudwatch")
-    return cloudwatch
-
 
 # Configuration from environment variables
 WARNING_THRESHOLD = int(os.environ.get("WARNING_THRESHOLD", "75"))
@@ -56,6 +26,9 @@ DISABLE_THRESHOLD = int(os.environ.get("DISABLE_THRESHOLD", "90"))
 AUTO_DISABLE = os.environ.get("AUTO_DISABLE", "false").lower() == "true"
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "cloud-admins@jennasrunbooks.com")
 EXEMPTION_TAG = os.environ.get("EXEMPTION_TAG", "key-rotation-exempt")
+CREDENTIAL_REPORT_POLL_INTERVAL = float(
+    os.environ.get("CREDENTIAL_REPORT_POLL_INTERVAL", "2")
+)
 
 
 def lambda_handler(event, context):  # noqa: ARG001
@@ -69,29 +42,28 @@ def lambda_handler(event, context):  # noqa: ARG001
 
         # Wait for report generation with timeout
         timeout_seconds = int(os.environ.get("CREDENTIAL_REPORT_TIMEOUT", "60"))
-        max_attempts = (
-            timeout_seconds // 2
-        )  # Convert seconds to attempts (2 sec intervals)
+        max_attempts = int(timeout_seconds // CREDENTIAL_REPORT_POLL_INTERVAL)
+        if max_attempts == 0:  # Ensure at least one attempt
+            max_attempts = 1
         attempt = 0
 
         while True:
             attempt += 1
             if attempt > max_attempts:
-                timeout_seconds = max_attempts * 2
+                actual_timeout_seconds = max_attempts * CREDENTIAL_REPORT_POLL_INTERVAL
                 logger.error(
-                    f"Credential report generation timed out after {timeout_seconds} seconds"
+                    f"Credential report generation timed out after {actual_timeout_seconds} seconds"
                 )
                 raise Exception(
-                    f"Credential report generation timed out after {timeout_seconds} seconds. "
+                    f"Credential report generation timed out after {actual_timeout_seconds} seconds. "
                     "AWS may be experiencing issues or the account has too many users."
                 )
 
-            # Sleep briefly before retrying; keep short to avoid slow tests
-            time.sleep(0.1)
+            time.sleep(CREDENTIAL_REPORT_POLL_INTERVAL)
             response = iam.get_credential_report()
             if "Content" in response:
                 logger.info(
-                    f"Credential report generated successfully after {attempt * 2} seconds"
+                    f"Credential report generated successfully after {attempt * CREDENTIAL_REPORT_POLL_INTERVAL} seconds"
                 )
                 break
 
@@ -377,9 +349,9 @@ def publish_metrics(metrics):
     namespace = "IAM/KeyRotation"
 
     try:
-        cw = get_cloudwatch_client()
+        cloudwatch = get_cloudwatch_client()
         for metric_name, value in metrics.items():
-            cw.put_metric_data(
+            cloudwatch.put_metric_data(
                 Namespace=namespace,
                 MetricData=[
                     {

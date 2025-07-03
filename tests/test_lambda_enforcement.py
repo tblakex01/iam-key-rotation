@@ -14,12 +14,12 @@ from datetime import datetime, timedelta
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
 # Add the lambda directory to the path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "lambda", "access_key_enforcement")
-)
+# Add the lambda directory to the path, so utils can be found
+lambda_dir = os.path.join(os.path.dirname(__file__), "..", "lambda")
+sys.path.insert(0, lambda_dir)
 
-# Import after path modification  # noqa: E402
-import access_key_enforcement  # noqa: E402
+# Now import the specific module
+from access_key_enforcement import access_key_enforcement  # noqa: E402
 
 
 class TestLambdaHandler(unittest.TestCase):
@@ -35,11 +35,18 @@ class TestLambdaHandler(unittest.TestCase):
             "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.iam_client")
-    @patch("access_key_enforcement.ses_client")
-    @patch("access_key_enforcement.cloudwatch")
-    def test_lambda_handler_success(self, mock_cloudwatch, mock_ses, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.get_ses_client")
+    @patch("access_key_enforcement.access_key_enforcement.get_cloudwatch_client")
+    def test_lambda_handler_success(self, mock_get_cloudwatch_client, mock_get_ses_client, mock_get_iam_client):
         """Test successful Lambda execution"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
+        mock_ses = Mock()
+        mock_get_ses_client.return_value = mock_ses
+        mock_cloudwatch = Mock()
+        mock_get_cloudwatch_client.return_value = mock_cloudwatch
+
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}
         credential_report_data = (
@@ -95,10 +102,13 @@ class TestLambdaHandler(unittest.TestCase):
             "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.iam_client")
-    @patch("access_key_enforcement.time.sleep")
-    def test_lambda_handler_credential_report_timeout(self, mock_sleep, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.time.sleep")
+    def test_lambda_handler_credential_report_timeout(self, mock_sleep, mock_get_iam_client):
         """Test Lambda execution when credential report generation times out"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
+
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}
 
@@ -116,7 +126,7 @@ class TestLambdaHandler(unittest.TestCase):
 
         # Verify the timeout exception message
         self.assertIn("Credential report generation timed out", str(cm.exception))
-        self.assertIn("60 seconds", str(cm.exception))
+        self.assertIn("60.0 seconds", str(cm.exception))
 
     @patch.dict(
         os.environ,
@@ -128,14 +138,21 @@ class TestLambdaHandler(unittest.TestCase):
             "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.iam_client")
-    @patch("access_key_enforcement.ses_client")
-    @patch("access_key_enforcement.cloudwatch")
-    @patch("access_key_enforcement.time.sleep")  # Mock sleep to speed up test
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.get_ses_client")
+    @patch("access_key_enforcement.access_key_enforcement.get_cloudwatch_client")
+    @patch("access_key_enforcement.access_key_enforcement.time.sleep")  # Mock sleep to speed up test
     def test_lambda_handler_credential_report_retry_success(
-        self, mock_sleep, mock_cloudwatch, mock_ses, mock_iam
+        self, mock_sleep, mock_get_cloudwatch_client, mock_get_ses_client, mock_get_iam_client
     ):
         """Test Lambda execution when credential report succeeds after retries"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
+        mock_ses = Mock()
+        mock_get_ses_client.return_value = mock_ses
+        mock_cloudwatch = Mock()
+        mock_get_cloudwatch_client.return_value = mock_cloudwatch
+
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}
 
@@ -177,9 +194,11 @@ class TestLambdaHandler(unittest.TestCase):
             "CREDENTIAL_REPORT_TIMEOUT": "10",  # Custom short timeout for testing
         },
     )
-    @patch("access_key_enforcement.iam_client")
-    def test_lambda_handler_custom_timeout(self, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    def test_lambda_handler_custom_timeout(self, mock_get_iam_client):
         """Test Lambda execution with custom credential report timeout"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}
 
@@ -197,15 +216,17 @@ class TestLambdaHandler(unittest.TestCase):
 
         # Verify the timeout exception message reflects custom timeout
         self.assertIn("Credential report generation timed out", str(cm.exception))
-        self.assertIn("10 seconds", str(cm.exception))
+        self.assertIn("10.0 seconds", str(cm.exception))
 
 
 class TestUserExemption(unittest.TestCase):
     """Test user exemption functionality"""
 
-    @patch("access_key_enforcement.iam_client")
-    def test_is_user_exempt_true(self, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    def test_is_user_exempt_true(self, mock_get_iam_client):
         """Test user exemption when user has exemption tag"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
         mock_iam.list_user_tags.return_value = {
             "Tags": [
                 {"Key": "key-rotation-exempt", "Value": "true"},
@@ -216,9 +237,11 @@ class TestUserExemption(unittest.TestCase):
         result = access_key_enforcement.is_user_exempt("testuser")
         self.assertTrue(result)
 
-    @patch("access_key_enforcement.iam_client")
-    def test_is_user_exempt_false(self, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    def test_is_user_exempt_false(self, mock_get_iam_client):
         """Test user exemption when user has no exemption tag"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
         mock_iam.list_user_tags.return_value = {
             "Tags": [{"Key": "email", "Value": "test@example.com"}]
         }
@@ -226,9 +249,11 @@ class TestUserExemption(unittest.TestCase):
         result = access_key_enforcement.is_user_exempt("testuser")
         self.assertFalse(result)
 
-    @patch("access_key_enforcement.iam_client")
-    def test_is_user_exempt_false_value(self, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    def test_is_user_exempt_false_value(self, mock_get_iam_client):
         """Test user exemption when exemption tag is false"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
         mock_iam.list_user_tags.return_value = {
             "Tags": [
                 {"Key": "key-rotation-exempt", "Value": "false"},
@@ -251,10 +276,10 @@ class TestAccessKeyProcessing(unittest.TestCase):
             "DISABLE_THRESHOLD": "90",
         },
     )
-    @patch("access_key_enforcement.get_user_email")
-    def test_process_key_warning(self, mock_get_email):
+    @patch("access_key_enforcement.access_key_enforcement.get_user_email")
+    def test_process_key_warning(self, mock_get_user_email):
         """Test key processing for warning threshold"""
-        mock_get_email.return_value = "test@example.com"
+        mock_get_user_email.return_value = "test@example.com"
 
         # Create a key that's 80 days old (warning range)
         old_date = datetime.now() - timedelta(days=80)
@@ -289,10 +314,10 @@ class TestAccessKeyProcessing(unittest.TestCase):
             "DISABLE_THRESHOLD": "90",
         },
     )
-    @patch("access_key_enforcement.get_user_email")
-    def test_process_key_urgent(self, mock_get_email):
+    @patch("access_key_enforcement.access_key_enforcement.get_user_email")
+    def test_process_key_urgent(self, mock_get_user_email):
         """Test key processing for urgent threshold"""
-        mock_get_email.return_value = "test@example.com"
+        mock_get_user_email.return_value = "test@example.com"
 
         # Create a key that's 87 days old (urgent range)
         old_date = datetime.now() - timedelta(days=87)
@@ -327,10 +352,10 @@ class TestAccessKeyProcessing(unittest.TestCase):
             "DISABLE_THRESHOLD": "90",
         },
     )
-    @patch("access_key_enforcement.get_user_email")
-    def test_process_key_expired(self, mock_get_email):
+    @patch("access_key_enforcement.access_key_enforcement.get_user_email")
+    def test_process_key_expired(self, mock_get_user_email):
         """Test key processing for expired threshold"""
-        mock_get_email.return_value = "test@example.com"
+        mock_get_user_email.return_value = "test@example.com"
 
         # Create a key that's 95 days old (expired)
         old_date = datetime.now() - timedelta(days=95)
@@ -361,9 +386,11 @@ class TestAccessKeyProcessing(unittest.TestCase):
 class TestEmailRetrieval(unittest.TestCase):
     """Test user email retrieval from tags"""
 
-    @patch("access_key_enforcement.iam_client")
-    def test_get_user_email_success(self, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    def test_get_user_email_success(self, mock_get_iam_client):
         """Test successful email retrieval"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
         mock_iam.list_user_tags.return_value = {
             "Tags": [
                 {"Key": "email", "Value": "test@example.com"},
@@ -374,9 +401,11 @@ class TestEmailRetrieval(unittest.TestCase):
         email = access_key_enforcement.get_user_email("testuser")
         self.assertEqual(email, "test@example.com")
 
-    @patch("access_key_enforcement.iam_client")
-    def test_get_user_email_not_found(self, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    def test_get_user_email_not_found(self, mock_get_iam_client):
         """Test email retrieval when no email tag exists"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
         mock_iam.list_user_tags.return_value = {
             "Tags": [{"Key": "department", "Value": "IT"}]
         }
@@ -388,9 +417,11 @@ class TestEmailRetrieval(unittest.TestCase):
 class TestKeyDisabling(unittest.TestCase):
     """Test access key disabling functionality"""
 
-    @patch("access_key_enforcement.iam_client")
-    def test_disable_key_success(self, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    def test_disable_key_success(self, mock_get_iam_client):
         """Test successful key disabling"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
         mock_iam.update_access_key.return_value = {}
 
         # Should not raise exception
@@ -401,9 +432,11 @@ class TestKeyDisabling(unittest.TestCase):
             UserName="testuser", AccessKeyId="AKIAEXAMPLE", Status="Inactive"
         )
 
-    @patch("access_key_enforcement.iam_client")
-    def test_disable_key_error(self, mock_iam):
+    @patch("access_key_enforcement.access_key_enforcement.get_iam_client")
+    def test_disable_key_error(self, mock_get_iam_client):
         """Test key disabling with error"""
+        mock_iam = Mock()
+        mock_get_iam_client.return_value = mock_iam
         from botocore.exceptions import ClientError
 
         error_response = {"Error": {"Code": "NoSuchEntity"}}
@@ -418,9 +451,11 @@ class TestKeyDisabling(unittest.TestCase):
 class TestNotificationSending(unittest.TestCase):
     """Test notification sending functionality"""
 
-    @patch("access_key_enforcement.ses_client")
-    def test_send_notification_warning(self, mock_ses):
+    @patch("access_key_enforcement.access_key_enforcement.get_ses_client")
+    def test_send_notification_warning(self, mock_get_ses_client):
         """Test sending warning notification"""
+        mock_ses = Mock()
+        mock_get_ses_client.return_value = mock_ses
         mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
 
         notification = {
@@ -442,9 +477,11 @@ class TestNotificationSending(unittest.TestCase):
         self.assertIn("test@example.com", call_args[1]["Destination"]["ToAddresses"])
         self.assertIn("WARNING", call_args[1]["Message"]["Subject"]["Data"])
 
-    @patch("access_key_enforcement.ses_client")
-    def test_send_notification_disabled(self, mock_ses):
+    @patch("access_key_enforcement.access_key_enforcement.get_ses_client")
+    def test_send_notification_disabled(self, mock_get_ses_client):
         """Test sending disabled notification"""
+        mock_ses = Mock()
+        mock_get_ses_client.return_value = mock_ses
         mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
 
         notification = {
@@ -469,9 +506,11 @@ class TestNotificationSending(unittest.TestCase):
 class TestMetricsPublishing(unittest.TestCase):
     """Test CloudWatch metrics publishing"""
 
-    @patch("access_key_enforcement.cloudwatch")
-    def test_publish_metrics_success(self, mock_cloudwatch):
+    @patch("access_key_enforcement.access_key_enforcement.get_cloudwatch_client")
+    def test_publish_metrics_success(self, mock_get_cloudwatch_client):
         """Test successful metrics publishing"""
+        mock_cloudwatch = Mock()
+        mock_get_cloudwatch_client.return_value = mock_cloudwatch
         mock_cloudwatch.put_metric_data.return_value = {}
 
         metrics = {
