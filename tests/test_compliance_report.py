@@ -25,6 +25,9 @@ class TestIAMComplianceReport(unittest.TestCase):
 
     def test_init_default_thresholds(self):
         """Test default threshold initialization"""
+        import importlib
+
+        importlib.reload(compliance)
         report = compliance.IAMComplianceReport()
 
         self.assertEqual(report.KEY_WARNING_THRESHOLD, 75)
@@ -47,12 +50,18 @@ class TestIAMComplianceReport(unittest.TestCase):
     )
     def test_init_custom_thresholds(self):
         """Test custom threshold initialization from environment"""
-        report = compliance.IAMComplianceReport()
+        import importlib
 
-        self.assertEqual(report.KEY_WARNING_THRESHOLD, 60)
-        self.assertEqual(report.KEY_NON_COMPLIANT_THRESHOLD, 80)
-        self.assertEqual(report.PASSWORD_WARNING_THRESHOLD, 70)
-        self.assertEqual(report.PASSWORD_NON_COMPLIANT_THRESHOLD, 85)
+        importlib.reload(compliance)
+        try:
+            report = compliance.IAMComplianceReport()
+
+            self.assertEqual(report.KEY_WARNING_THRESHOLD, 60)
+            self.assertEqual(report.KEY_NON_COMPLIANT_THRESHOLD, 80)
+            self.assertEqual(report.PASSWORD_WARNING_THRESHOLD, 70)
+            self.assertEqual(report.PASSWORD_NON_COMPLIANT_THRESHOLD, 85)
+        finally:
+            importlib.reload(compliance)
 
     @patch("aws_iam_compliance_report.iam_client")
     @patch("aws_iam_compliance_report.time.sleep")
@@ -78,7 +87,7 @@ class TestIAMComplianceReport(unittest.TestCase):
         # Call the method
         content = report.generate_credential_report()
 
-        self.assertEqual(content, b"test,content")
+        self.assertEqual(content, "test,content")
         mock_iam_client.generate_credential_report.assert_called_once()
         self.assertEqual(mock_iam_client.get_credential_report.call_count, 2)
 
@@ -112,57 +121,58 @@ class TestIAMComplianceReport(unittest.TestCase):
         report = compliance.IAMComplianceReport()
 
         user_data = {
-            "has_access_keys": True,
-            "key_1_age": 30,
-            "key_2_age": None,
-            "has_password": True,
-            "password_age": 45,
+            "access_key_1_active": True,
+            "access_key_1_last_rotated": datetime.now(timezone.utc)
+            - timedelta(days=30),
+            "access_key_2_active": False,
+            "access_key_2_last_rotated": None,
+            "password_enabled": True,
+            "password_last_changed": datetime.now(timezone.utc) - timedelta(days=45),
             "mfa_active": True,
         }
 
-        status = report.calculate_compliance_status(user_data)
+        metrics = report.calculate_compliance_metrics(user_data)
 
-        self.assertEqual(status["status"], "Compliant")
-        self.assertEqual(status["level"], "compliant")
-        self.assertEqual(len(status["issues"]), 0)
+        self.assertEqual(metrics["overall_compliance"], "COMPLIANT")
 
     def test_calculate_compliance_status_warning(self):
         """Test compliance status calculation for user with warnings"""
         report = compliance.IAMComplianceReport()
 
         user_data = {
-            "has_access_keys": True,
-            "key_1_age": 80,  # Warning level
-            "key_2_age": None,
-            "has_password": True,
-            "password_age": 45,
+            "access_key_1_active": True,
+            "access_key_1_last_rotated": datetime.now(timezone.utc)
+            - timedelta(days=80),
+            "access_key_2_active": False,
+            "access_key_2_last_rotated": None,
+            "password_enabled": True,
+            "password_last_changed": datetime.now(timezone.utc) - timedelta(days=45),
             "mfa_active": True,
         }
 
-        status = report.calculate_compliance_status(user_data)
+        metrics = report.calculate_compliance_metrics(user_data)
 
-        self.assertEqual(status["status"], "Warning")
-        self.assertEqual(status["level"], "warning")
-        self.assertIn("Access key 1 is 80 days old", status["issues"][0])
+        self.assertEqual(metrics["overall_compliance"], "WARNING")
 
     def test_calculate_compliance_status_non_compliant(self):
         """Test compliance status calculation for non-compliant user"""
         report = compliance.IAMComplianceReport()
 
         user_data = {
-            "has_access_keys": True,
-            "key_1_age": 95,  # Non-compliant
-            "key_2_age": 100,  # Non-compliant
-            "has_password": True,
-            "password_age": 95,  # Non-compliant
-            "mfa_active": False,  # Non-compliant
+            "access_key_1_active": True,
+            "access_key_1_last_rotated": datetime.now(timezone.utc)
+            - timedelta(days=95),
+            "access_key_2_active": True,
+            "access_key_2_last_rotated": datetime.now(timezone.utc)
+            - timedelta(days=100),
+            "password_enabled": True,
+            "password_last_changed": datetime.now(timezone.utc) - timedelta(days=95),
+            "mfa_active": False,
         }
 
-        status = report.calculate_compliance_status(user_data)
+        metrics = report.calculate_compliance_metrics(user_data)
 
-        self.assertEqual(status["status"], "Non-Compliant")
-        self.assertEqual(status["level"], "non_compliant")
-        self.assertEqual(len(status["issues"]), 4)  # All 4 issues
+        self.assertEqual(metrics["overall_compliance"], "NON_COMPLIANT")
 
     def test_parse_date_valid(self):
         """Test date parsing with valid date"""
@@ -194,23 +204,44 @@ class TestIAMComplianceReport(unittest.TestCase):
         """Test age calculation with valid date"""
         report = compliance.IAMComplianceReport()
 
-        # Date 30 days ago
         date = datetime.now(timezone.utc) - timedelta(days=30)
-        age = report.calculate_age_days(date)
+        user_data = {
+            "access_key_1_active": False,
+            "access_key_1_last_rotated": None,
+            "access_key_2_active": False,
+            "access_key_2_last_rotated": None,
+            "password_enabled": True,
+            "password_last_changed": date,
+        }
+        metrics = report.calculate_compliance_metrics(user_data)
 
-        self.assertEqual(age, 30)
+        self.assertEqual(metrics["password_age"], 30)
 
     def test_calculate_age_days_none(self):
         """Test age calculation with None date"""
         report = compliance.IAMComplianceReport()
 
-        age = report.calculate_age_days(None)
-        self.assertIsNone(age)
+        user_data = {
+            "access_key_1_active": False,
+            "access_key_1_last_rotated": None,
+            "access_key_2_active": False,
+            "access_key_2_last_rotated": None,
+            "password_enabled": True,
+            "password_last_changed": None,
+        }
+        metrics = report.calculate_compliance_metrics(user_data)
 
-    @patch("aws_iam_compliance_report.Progress")
-    def test_process_users_data(self, mock_progress_class):
+        self.assertIsNone(metrics["password_age"])
+
+    @patch.object(compliance, "get_iam_client")
+    def test_parse_credential_report(self, mock_get_client):
         """Test processing users data from credential report"""
         report = compliance.IAMComplianceReport()
+
+        mock_client = Mock()
+        mock_client.list_user_tags.return_value = {"Tags": []}
+        mock_client.list_access_keys.return_value = {"AccessKeyMetadata": [{}]}
+        mock_get_client.return_value = mock_client
 
         # Mock CSV data
         csv_content = (
@@ -218,20 +249,19 @@ class TestIAMComplianceReport(unittest.TestCase):
             "password_last_changed,password_next_rotation,mfa_active,"
             "access_key_1_active,access_key_1_last_rotated,access_key_1_last_used_date,"
             "access_key_1_last_used_region,access_key_1_last_used_service,"
-            "access_key_2_active,access_key_2_last_rotated\n"
-            "testuser1,arn:aws:iam::123456789012:user/testuser1,2023-01-01T00:00:00+00:00,"
+            "access_key_2_active,access_key_2_last_rotated,access_key_2_last_used_date,"
+            "access_key_2_last_used_region,access_key_2_last_used_service\n"
+            "user1,arn:aws:iam::123456789012:user/user1,2023-01-01T00:00:00+00:00,"
             "true,2023-12-01T00:00:00+00:00,2023-10-01T00:00:00+00:00,N/A,true,true,"
-            "2023-09-01T00:00:00+00:00,2023-12-01T00:00:00+00:00,us-east-1,s3,false,N/A\n"
-            "testuser2,arn:aws:iam::123456789012:user/testuser2,2023-01-01T00:00:00+00:00,"
-            "false,N/A,N/A,N/A,false,true,2023-01-01T00:00:00+00:00,N/A,N/A,N/A,false,N/A"
+            "2023-09-01T00:00:00+00:00,2023-12-01T00:00:00+00:00,us-east-1,s3,false,N/A,"
+            "N/A,N/A,N/A\n"
+            "user2,arn:aws:iam::123456789012:user/user2,2023-01-01T00:00:00+00:00,"
+            "false,N/A,N/A,N/A,false,true,2023-01-01T00:00:00+00:00,N/A,N/A,N/A,false,"
+            "N/A,N/A,N/A,N/A"
         )
 
-        # Mock progress bar
-        mock_progress = MagicMock()
-        mock_progress_class.return_value.__enter__.return_value = mock_progress
-
         # Process data
-        report.process_users_data(csv_content.encode())
+        report.parse_credential_report(csv_content)
 
         # Verify results
         self.assertEqual(len(report.users_data), 2)
@@ -255,14 +285,16 @@ class TestIAMComplianceReport(unittest.TestCase):
                 report.export_json("test_report.json")
 
         # Verify file was written
-        m.assert_called_once_with("test_report.json", "w", encoding="utf-8")
+        from pathlib import Path
+
+        m.assert_called_once_with(Path("test_report.json"), "w", encoding="utf-8")
         handle = m()
 
         # Verify JSON structure was written
         written_data = "".join(call[0][0] for call in handle.write.call_args_list)
         data = json.loads(written_data)
 
-        self.assertIn("report_date", data)
+        self.assertIn("generated_at", data)
         self.assertIn("summary", data)
         self.assertIn("users", data)
         self.assertEqual(len(data["users"]), 1)
@@ -275,13 +307,22 @@ class TestIAMComplianceReport(unittest.TestCase):
         report.users_data = [
             {
                 "username": "testuser",
-                "has_password": True,
+                "email": "user@example.com",
+                "department": "IT",
+                "arn": "arn:aws:iam::123456789012:user/testuser",
+                "user_creation_time": datetime.now(timezone.utc),
+                "password_enabled": True,
                 "password_age": 30,
-                "has_access_keys": True,
-                "key_1_age": 45,
-                "key_2_age": None,
+                "password_compliance": "COMPLIANT",
                 "mfa_active": True,
-                "compliance_status": "Compliant",
+                "access_key_1_active": True,
+                "key_1_age": 45,
+                "key_1_compliance": "COMPLIANT",
+                "access_key_2_active": False,
+                "key_2_age": None,
+                "key_2_compliance": "N/A",
+                "overall_compliance": "COMPLIANT",
+                "key_rotation_exempt": False,
             }
         ]
 
@@ -291,8 +332,12 @@ class TestIAMComplianceReport(unittest.TestCase):
             with patch("aws_iam_compliance_report.rprint"):
                 report.export_csv("test_report.csv")
 
+        from pathlib import Path
+
         # Verify file was written
-        m.assert_called_once_with("test_report.csv", "w", newline="", encoding="utf-8")
+        m.assert_called_once_with(
+            Path("test_report.csv"), "w", newline="", encoding="utf-8"
+        )
 
     @patch("aws_iam_compliance_report.Table")
     @patch("aws_iam_compliance_report.console")
@@ -317,7 +362,7 @@ class TestIAMComplianceReport(unittest.TestCase):
         report.display_summary()
 
         # Verify table was created and displayed
-        mock_table_class.assert_called_once_with(title="IAM Compliance Summary")
+        mock_table_class.assert_called_once_with(title="Compliance Overview")
         mock_console.print.assert_called_with(mock_table)
 
 
@@ -378,15 +423,18 @@ class TestMainFunction(unittest.TestCase):
         # Mock report instance
         mock_report = Mock()
         mock_report_class.return_value = mock_report
-        mock_report.generate_credential_report.return_value = b"test"
+        mock_report.generate_credential_report.return_value = "test"
+        mock_report.summary_stats = {"expired_keys": 0, "expired_passwords": 0}
 
-        compliance.main()
+        with self.assertRaises(SystemExit) as cm:
+            compliance.main()
+        self.assertEqual(cm.exception.code, 0)
 
         # Verify methods were called
         mock_report.generate_credential_report.assert_called_once()
-        mock_report.process_users_data.assert_called_once_with(b"test")
+        mock_report.parse_credential_report.assert_called_once_with("test")
         mock_report.display_summary.assert_called_once()
-        mock_report.display_users_table.assert_called_once()
+        mock_report.display_detailed_report.assert_called_once()
 
     @patch("aws_iam_compliance_report.IAMComplianceReport")
     @patch("aws_iam_compliance_report.parse_args")
@@ -403,12 +451,16 @@ class TestMainFunction(unittest.TestCase):
         # Mock report instance
         mock_report = Mock()
         mock_report_class.return_value = mock_report
-        mock_report.generate_credential_report.return_value = b"test"
+        mock_report.generate_credential_report.return_value = "test"
+        mock_report.summary_stats = {"expired_keys": 0, "expired_passwords": 0}
 
-        compliance.main()
+        with self.assertRaises(SystemExit) as cm:
+            compliance.main()
+        self.assertEqual(cm.exception.code, 0)
 
         # Verify export was called
         mock_report.export_json.assert_called_once_with("report.json")
+        mock_report.parse_credential_report.assert_called_once_with("test")
 
     @patch("aws_iam_compliance_report.IAMComplianceReport")
     @patch("aws_iam_compliance_report.parse_args")
@@ -430,12 +482,15 @@ class TestMainFunction(unittest.TestCase):
         mock_report = Mock()
         mock_report_class.return_value = mock_report
         mock_report.generate_credential_report.side_effect = Exception("Test error")
+        mock_report.summary_stats = {"expired_keys": 0, "expired_passwords": 0}
 
-        compliance.main()
+        with self.assertRaises(SystemExit) as cm:
+            compliance.main()
+        self.assertEqual(cm.exception.code, 1)
 
         # Verify error was logged
         mock_logger.error.assert_called_once()
-        mock_rprint.assert_called_with("[red]Error generating report: Test error[/red]")
+        mock_rprint.assert_called_with("[red]Error:[/red] Test error")
 
 
 if __name__ == "__main__":

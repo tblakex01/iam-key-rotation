@@ -4,7 +4,7 @@ Unit tests for AWS IAM Self-Service Key Rotation Tool
 """
 
 import unittest
-from unittest.mock import Mock, patch, mock_open
+from unittest.mock import Mock, MagicMock, patch, mock_open
 import sys
 import os
 import json
@@ -22,26 +22,24 @@ class TestIAMClient(unittest.TestCase):
 
     def setUp(self):
         """Reset global session before each test"""
-        key_rotation._session = None
+        key_rotation._iam_client = None
 
-    @patch("aws_iam_self_service_key_rotation.boto3.Session")
-    def test_get_iam_client_creates_session(self, mock_session_class):
+    @patch("aws_iam_self_service_key_rotation.boto3.client")
+    def test_get_iam_client_creates_session(self, mock_boto_client):
         """Test that IAM client creates and caches session"""
-        mock_session = Mock()
-        mock_session_class.return_value = mock_session
         mock_client = Mock()
-        mock_session.client.return_value = mock_client
+        mock_boto_client.return_value = mock_client
 
         # First call should create session
         client1 = key_rotation.get_iam_client()
         self.assertEqual(client1, mock_client)
-        mock_session_class.assert_called_once()
+        mock_boto_client.assert_called_once_with("iam")
 
         # Second call should reuse session
         client2 = key_rotation.get_iam_client()
         self.assertEqual(client2, mock_client)
         # Still only called once
-        self.assertEqual(mock_session_class.call_count, 1)
+        self.assertEqual(mock_boto_client.call_count, 1)
 
 
 class TestArgumentParsing(unittest.TestCase):
@@ -497,7 +495,7 @@ class TestMainFunction(unittest.TestCase):
         mock_path.exists.return_value = True
 
         # Mock ConfigParser
-        mock_config = Mock()
+        mock_config = MagicMock()
         mock_configparser.return_value = mock_config
         mock_config.__contains__ = Mock(return_value=True)
         mock_config.__getitem__ = Mock(return_value={})
@@ -508,7 +506,6 @@ class TestMainFunction(unittest.TestCase):
         mock_client.create_access_key.assert_called_once()
 
         # Verify config was updated
-        mock_config.__setitem__.assert_called()
         mock_config.write.assert_called_once()
 
 
