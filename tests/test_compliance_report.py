@@ -200,6 +200,16 @@ class TestIAMComplianceReport(unittest.TestCase):
         result = report.parse_date("not_supported")
         self.assertIsNone(result)
 
+    def test_parse_credential_report_skips_incomplete_rows(self):
+        """Regression guard to ensure malformed CSV rows are ignored safely."""
+
+        report = compliance.IAMComplianceReport()
+
+        csv_data = "header1,header2\ninvalid_row_without_enough_columns\n"
+        report.parse_credential_report(csv_data)
+
+        self.assertEqual(report.users_data, [])
+
     def test_calculate_age_days_valid(self):
         """Test age calculation with valid date"""
         report = compliance.IAMComplianceReport()
