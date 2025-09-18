@@ -4,7 +4,7 @@ Unit tests for AWS IAM Self-Service Password Reset Tool
 """
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, mock_open
 import sys
 import os
 
@@ -264,6 +264,176 @@ class TestPasswordDisplay(unittest.TestCase):
 
         # Verify password was printed twice (initial + repeat)
         self.assertEqual(mock_console.print.call_count, 2)
+
+
+class TestMainFlow(unittest.TestCase):
+    """Regression tests that exercise the interactive main workflow."""
+
+    @patch("aws_iam_self_service_password_reset.log_password_reset")
+    @patch("aws_iam_self_service_password_reset.secure_password_display")
+    @patch(
+        "aws_iam_self_service_password_reset.getpass.getpass",
+        return_value="old-password",
+    )
+    @patch(
+        "aws_iam_self_service_password_reset.passwordgen", return_value="NewPassw0rd!"
+    )
+    @patch("aws_iam_self_service_password_reset.boto3.client")
+    @patch(
+        "aws_iam_self_service_password_reset.get_current_user",
+        return_value={"UserName": "cli-user"},
+    )
+    @patch(
+        "aws_iam_self_service_password_reset.validate_aws_connection", return_value=True
+    )
+    def test_main_successful_reset(
+        self,
+        mock_validate,
+        mock_get_user,
+        mock_boto_client,
+        mock_passwordgen,
+        mock_getpass,
+        mock_display,
+        mock_log,
+    ):
+        iam_client = Mock()
+        mock_boto_client.return_value = iam_client
+        iam_client.get_login_profile.return_value = {}
+
+        with patch("aws_iam_self_service_password_reset.rprint"):
+            pwd_reset.main()
+
+        iam_client.change_password.assert_called_once_with(
+            OldPassword="old-password", NewPassword="NewPassw0rd!"
+        )
+        mock_display.assert_called_once_with("NewPassw0rd!")
+        mock_log.assert_called_once_with("cli-user")
+
+    @patch("aws_iam_self_service_password_reset.sys.exit", side_effect=SystemExit)
+    @patch("aws_iam_self_service_password_reset.boto3.client")
+    @patch(
+        "aws_iam_self_service_password_reset.get_current_user",
+        return_value={"UserName": "cli-user"},
+    )
+    @patch(
+        "aws_iam_self_service_password_reset.validate_aws_connection", return_value=True
+    )
+    def test_main_missing_login_profile_triggers_exit(
+        self, mock_validate, mock_get_user, mock_boto_client, mock_exit
+    ):
+        from botocore.exceptions import ClientError
+
+        iam_client = Mock()
+        mock_boto_client.return_value = iam_client
+        iam_client.get_login_profile.side_effect = ClientError(
+            {"Error": {"Code": "NoSuchEntity", "Message": "missing"}},
+            "GetLoginProfile",
+        )
+
+        with patch("aws_iam_self_service_password_reset.rprint"):
+            with self.assertRaises(SystemExit):
+                pwd_reset.main()
+
+        mock_exit.assert_called_with(1)
+
+    @patch("aws_iam_self_service_password_reset.sys.exit", side_effect=SystemExit)
+    @patch(
+        "aws_iam_self_service_password_reset.validate_aws_connection",
+        return_value=False,
+    )
+    def test_main_exits_when_connection_invalid(self, mock_validate, mock_exit):
+        with patch("aws_iam_self_service_password_reset.rprint"):
+            with self.assertRaises(SystemExit):
+                pwd_reset.main()
+
+        mock_exit.assert_called_with(1)
+
+    @patch("aws_iam_self_service_password_reset.sys.exit", side_effect=SystemExit)
+    @patch("aws_iam_self_service_password_reset.get_current_user", return_value=None)
+    @patch(
+        "aws_iam_self_service_password_reset.validate_aws_connection", return_value=True
+    )
+    def test_main_exits_when_user_missing(
+        self, mock_validate, mock_get_user, mock_exit
+    ):
+        with patch("aws_iam_self_service_password_reset.rprint"):
+            with self.assertRaises(SystemExit):
+                pwd_reset.main()
+
+        mock_exit.assert_called_with(1)
+
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("aws_iam_self_service_password_reset.sys.exit", side_effect=SystemExit)
+    @patch("aws_iam_self_service_password_reset.getpass.getpass", return_value="old")
+    @patch("aws_iam_self_service_password_reset.passwordgen", return_value="NewPass!1")
+    @patch("aws_iam_self_service_password_reset.boto3.client")
+    @patch(
+        "aws_iam_self_service_password_reset.get_current_user",
+        return_value={"UserName": "cli-user"},
+    )
+    @patch(
+        "aws_iam_self_service_password_reset.validate_aws_connection", return_value=True
+    )
+    def test_main_handles_policy_violation(
+        self,
+        mock_validate,
+        mock_get_user,
+        mock_boto_client,
+        mock_passwordgen,
+        mock_getpass,
+        mock_exit,
+        mock_file,
+    ):
+        from botocore.exceptions import ClientError
+
+        iam_client = Mock()
+        mock_boto_client.return_value = iam_client
+        iam_client.get_login_profile.return_value = {}
+        iam_client.change_password.side_effect = ClientError(
+            {"Error": {"Code": "PasswordPolicyViolation", "Message": "too short"}},
+            "ChangePassword",
+        )
+
+        with patch("aws_iam_self_service_password_reset.rprint"):
+            with self.assertRaises(SystemExit):
+                pwd_reset.main()
+
+        mock_exit.assert_called_with(1)
+        mock_file().write.assert_called()
+
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("aws_iam_self_service_password_reset.sys.exit", side_effect=SystemExit)
+    @patch("aws_iam_self_service_password_reset.getpass.getpass", return_value="old")
+    @patch("aws_iam_self_service_password_reset.passwordgen", return_value="NewPass!1")
+    @patch("aws_iam_self_service_password_reset.boto3.client")
+    @patch(
+        "aws_iam_self_service_password_reset.get_current_user",
+        return_value={"UserName": "cli-user"},
+    )
+    @patch(
+        "aws_iam_self_service_password_reset.validate_aws_connection", return_value=True
+    )
+    def test_main_handles_unexpected_exception(
+        self,
+        mock_validate,
+        mock_get_user,
+        mock_boto_client,
+        mock_passwordgen,
+        mock_getpass,
+        mock_exit,
+        mock_file,
+    ):
+        iam_client = Mock()
+        mock_boto_client.return_value = iam_client
+        iam_client.get_login_profile.return_value = {}
+        iam_client.change_password.side_effect = RuntimeError("boom")
+
+        with patch("aws_iam_self_service_password_reset.rprint"):
+            with self.assertRaises(SystemExit):
+                pwd_reset.main()
+
+        mock_exit.assert_called_with(1)
+        mock_file().write.assert_called()
 
 
 if __name__ == "__main__":

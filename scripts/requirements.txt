@@ -13,3 +13,4 @@ moto>=4.2.0
 mypy
 flake8
 black
+bandit>=1.7.0
