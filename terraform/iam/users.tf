@@ -2,11 +2,12 @@ variable "user_info" {
   description = "Map of AWS IAM usernames, email address tags and custom user tags"
   type = map(object({
     email     = string
-    user_tags = optional(map(string))
+    user_tags = map(string)
   }))
   default = {
     "userA" = {
       email = "userA@jennasrunbooks.com"
+      user_tags = {}
     }
     "userB" = {
       email = "userB@jennasrunbooks.com"
@@ -29,14 +30,14 @@ resource "aws_iam_user" "this" {
     },
     each.value.user_tags
   )
-  # Provisions the login profile for each new user and outputs their temp login password
-  provisioner "local-exec" {
-    when    = create
-    command = "python ../../scripts/aws_iam_user_password_reset.py profile -u ${each.key}"
-  }
-  # Destroys the login profile, MFA devices and access keys for each removed user
-  provisioner "local-exec" {
-    when    = destroy
-    command = "python ../../scripts/aws_iam_user_cleanup.py ${each.key}"
-  }
+  # Note: No provisioners needed for infrastructure deployment
+  # Users will use self-service scripts distributed separately for password management
+}
+
+# Create access keys for test users (needed for testing key rotation enforcement)
+resource "aws_iam_access_key" "this" {
+  for_each = var.user_info
+  user     = aws_iam_user.this[each.key].name
+
+  depends_on = [aws_iam_user.this]
 }

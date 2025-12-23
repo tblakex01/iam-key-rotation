@@ -56,3 +56,15 @@ variable "alarm_sns_topic" {
   type        = string
   default     = ""
 }
+
+variable "lambda_source_dir" {
+  description = "Source directory for Lambda function code"
+  type        = string
+  default     = "../../lambda/access_key_enforcement"
+}
+
+variable "scripts_path" {
+  description = "Path to the scripts directory for provisioners"
+  type        = string
+  default     = "../../scripts"
+}

@@ -62,3 +62,25 @@ output "configuration_summary" {
     schedule          = var.schedule_expression
   }
 }
+
+# Output access key information for testing
+output "test_user_access_keys" {
+  description = "Access key information for test users (for testing purposes only)"
+  value = {
+    for username, key in aws_iam_access_key.this : username => {
+      access_key_id = key.id
+      creation_date = key.create_date
+      # Note: secret is not output for security (stored in terraform state only)
+    }
+  }
+  sensitive = false
+}
+
+# Output access key secrets (marked sensitive so they don't show in logs)
+output "test_user_access_key_secrets" {
+  description = "Access key secrets for test users (sensitive - for testing only)"
+  value = {
+    for username, key in aws_iam_access_key.this : username => key.secret
+  }
+  sensitive = true
+}

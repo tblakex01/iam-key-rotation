@@ -1,0 +1,11 @@
+# ---------------------------------------------------------------------------------------------------------------------
+# ACCOUNT CONFIGURATION EXAMPLE
+# Copy this file to account.hcl and update with your actual AWS account information
+# ---------------------------------------------------------------------------------------------------------------------
+
+locals {
+  # AWS Account Configuration - UPDATE WITH YOUR VALUES
+  account_name = "your-account-name"     # e.g., "company-nonprod", "org-prod"
+  account_id   = "123456789012"          # Your actual AWS account ID
+  profile      = "your-aws-profile"      # AWS CLI profile name for this account
+}

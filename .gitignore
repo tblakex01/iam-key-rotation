@@ -244,6 +244,20 @@ override.tf.json
 .terraformrc
 terraform.rc
 
+# Terragrunt
+**/.terragrunt-cache/
+**/terraform.tfvars
+**/backend.tf
+**/provider.tf
+**/.terraform.lock.hcl
+terragrunt/*/terraform.tfplan
+
+# Terragrunt sensitive configuration files (use .example versions)
+terragrunt/**/account.hcl
+terragrunt/**/config.hcl
+
 # claude code
 .claude/
 CLAUDE.md
+
+.windsurfrules

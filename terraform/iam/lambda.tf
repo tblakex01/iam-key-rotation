@@ -94,7 +94,7 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
 # Package Lambda function
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_dir  = "../../lambda/access_key_enforcement"
+  source_dir  = var.lambda_source_dir
   output_path = "access_key_enforcement.zip"
   excludes    = ["__pycache__", "*.pyc"]
 }

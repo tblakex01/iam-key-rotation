@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------------------------------------------------
+# IAM KEY ROTATION SERVICE CONFIGURATION EXAMPLE
+# Copy this file to config.hcl and update with your organization-specific values
+# ---------------------------------------------------------------------------------------------------------------------
+
+locals {
+  # Common tags for all resources - UPDATE WITH YOUR VALUES
+  common_tags = {
+    Application = "iam-key-rotation"
+    Environment = "dev" 
+    Account     = "your-account-name"    # Match account.hcl account_name
+    Region      = "us-east-1"
+    ManagedBy   = "terragrunt"
+    Repository  = "iam-key-rotation"
+    Purpose     = "security-compliance"
+  }
+  
+  # IAM Key Rotation Policy - SAFE TESTING VALUES
+  warning_threshold    = 30     # Days before sending warning (safer for dev/testing)
+  urgent_threshold     = 45     # Days before sending urgent notice (safer for dev/testing) 
+  disable_threshold    = 60     # Days before disabling keys (safer for dev/testing)
+  auto_disable         = false  # Whether to auto-disable expired keys (false = safer for testing)
+  sender_email         = "your-security-team@yourcompany.com"  # UPDATE WITH YOUR EMAIL
+  exemption_tag        = "key-rotation-exempt"
+  schedule_expression  = "rate(6 hours)"  # More frequent for testing (use "rate(1 day)" for prod)
+  alarm_sns_topic      = ""     # Auto-create SNS topic (or specify existing ARN)
+  
+  # Test Users Configuration - UPDATE WITH YOUR EMAIL AND USER NAMES
+  user_info = {
+    "iam-test-user-dev-1" = {
+      email = "your-email@yourcompany.com"  # UPDATE WITH YOUR EMAIL
+      user_tags = {
+        "purpose"     = "iam-key-rotation-testing"
+        "created-by"  = "terragrunt"
+      }
+    }
+    
+    "iam-test-user-dev-2" = {
+      email = "your-email@yourcompany.com"  # UPDATE WITH YOUR EMAIL
+      user_tags = {
+        "purpose"               = "iam-key-rotation-testing"
+        "created-by"           = "terragrunt"
+        "key-rotation-exempt"  = "false"  # Test normal rotation flow
+      }
+    }
+    
+    "iam-test-exempt-user-dev" = {
+      email = "your-email@yourcompany.com"  # UPDATE WITH YOUR EMAIL
+      user_tags = {
+        "purpose"               = "iam-key-rotation-testing"
+        "created-by"           = "terragrunt"
+        "key-rotation-exempt"  = "true"   # Test exemption functionality
+      }
+    }
+  }
+}
