@@ -1,6 +1,6 @@
 # 🚀 Terragrunt Multi-Environment Deployment
 
-This directory contains Terragrunt configurations for deploying the IAM Key Rotation system across multiple AWS accounts and regions.
+This directory contains Terragrunt configurations for deploying the **fully automated IAM Key Rotation system** across multiple AWS accounts and regions. The system includes 4 Lambda functions, S3 encrypted storage, DynamoDB tracking, CloudTrail monitoring, and EventBridge orchestration.
 
 ## 📁 Directory Structure
 
@@ -19,23 +19,31 @@ terragrunt/
 
 ## 🧪 Test Environment Setup
 
-The `dev` environment is configured for **SAFE TESTING** with:
+The `dev` environment is configured for **IMMEDIATE TESTING** with:
 
 ### **Test Users Created:**
-- `iam-test-user-dev-1` - Normal test user
+- `iam-test-user-dev-1` - Normal test user with automated key creation
 - `iam-test-user-dev-2` - Test user (explicitly not exempt)  
 - `iam-test-exempt-user-dev` - Test exemption functionality
 
-### **Safe Testing Thresholds:**
-- **Warning**: 30 days (instead of 75)
-- **Urgent**: 45 days (instead of 85)
-- **Disable**: 60 days (instead of 90)
-- **Auto-disable**: `false` (no automatic disabling)
+### **Ultra-Fast Testing Thresholds:**
+- **Warning**: 0 days (trigger rotation immediately)
+- **Urgent**: 1 day (urgent notices at 1 day old)
+- **Disable**: 2 days (old key deleted after 2 days)
+- **Auto-disable**: `false` (manual deletion for safety)
+- **Retention**: 14 days (production-like cleanup workflow)
+
+### **Automated System Components:**
+- **4 Lambda Functions**: enforcement, download_tracker, url_regenerator, cleanup
+- **2 S3 Buckets**: credentials storage (encrypted), CloudTrail logs
+- **1 DynamoDB Table**: rotation tracking with composite keys and GSI indexes
+- **CloudTrail**: S3 Data Events for download detection
+- **EventBridge Rules**: Daily enforcement, day 7 reminders, day 14 cleanup
 
 ### **Enhanced Monitoring:**
-- **Schedule**: Every 6 hours (instead of daily)
-- **Logging**: DEBUG level for detailed feedback
-- **Alarms**: More sensitive thresholds for quick feedback
+- **Schedule**: Every 6 hours (for faster testing feedback)
+- **Logging**: Detailed CloudWatch logs for all 4 Lambdas
+- **Alarms**: Sensitive thresholds for quick issue detection
 
 ## 🚀 Deployment Commands
 
@@ -166,22 +174,41 @@ Each region has a `region.hcl` file with:
 ### **Production Deployment:**
 When ready for production:
 1. Create production environment configuration
-2. Set realistic thresholds (75/85/90 days)
-3. Enable `auto_disable = true` for strict enforcement
-4. Configure real user email addresses
-5. Set daily execution schedule
+2. Set production thresholds (75/85/90 days)
+3. Consider enabling `auto_disable = true` for strict enforcement (optional)
+4. Configure real user email addresses in IAM tags
+5. Set daily execution schedule: `rate(1 day)`
+6. Keep 14-day retention for old key cleanup
+7. Verify SES sender email is production-ready
+8. Configure SNS topics for CloudWatch alarms
 
 ## 📊 Monitoring
 
-### **CloudWatch Resources:**
-- **Log Group**: `/aws/lambda/iam-access-key-enforcement`
-- **Metrics Namespace**: `IAM/KeyRotation`
-- **Alarms**: Expired keys and urgent notifications
+### **CloudWatch Log Groups:**
+- `/aws/lambda/iam-access-key-enforcement` - Enforcement Lambda logs
+- `/aws/lambda/iam-key-download-tracker` - Download tracking logs
+- `/aws/lambda/iam-key-url-regenerator` - Day 7 reminder logs
+- `/aws/lambda/iam-key-cleanup` - Day 14 cleanup logs
 
-### **SNS Notifications:**
-- Auto-created SNS topic per environment
-- Email notifications for CloudWatch alarms
-- SES email notifications to users
+### **CloudWatch Metrics:**
+- **Namespace**: `IAM/KeyRotation`
+- **Metrics**: `total_keys`, `warning_keys`, `urgent_keys`, `expired_keys`
+- **Alarms**: Expired keys threshold, non-compliant users
+
+### **DynamoDB Tracking:**
+- Table: `iam-key-rotation-tracking`
+- Tracks: rotation status, download status, timestamps, old key deletion
+- GSI: `status-index` for querying by rotation status
+
+### **S3 Storage:**
+- Credentials bucket: `iam-credentials-{account-id}`
+- CloudTrail logs: `iam-credentials-cloudtrail-{account-id}`
+
+### **Email Notifications:**
+- SES-powered HTML email templates
+- Day 0: Rotation initiated with download link
+- Day 7: Reminder if credentials not downloaded
+- Email tracking in DynamoDB
 
 ## 🔄 State Management
 
@@ -216,19 +243,46 @@ terragrunt init
 
 ### **Validation:**
 
-**Test Lambda function:**
+**Test enforcement Lambda (triggers rotation):**
 ```bash
 aws lambda invoke \
   --function-name iam-access-key-enforcement \
   --profile your-aws-profile \
   --region us-east-1 \
-  /tmp/test-output.json
+  /tmp/test-output.json && cat /tmp/test-output.json
 ```
 
-**Check CloudWatch logs:**
+**Run workflow tests (day 7/14 simulation):**
 ```bash
-aws logs filter-log-events \
-  --log-group-name "/aws/lambda/iam-access-key-enforcement" \
+cd /path/to/repo
+python3 tests/test_rotation_workflow.py
+```
+
+**Check DynamoDB for rotation records:**
+```bash
+aws dynamodb scan \
+  --table-name iam-key-rotation-tracking \
   --profile your-aws-profile \
   --region us-east-1
+```
+
+**Verify S3 credentials exist:**
+```bash
+aws s3 ls s3://iam-credentials-YOUR-ACCOUNT-ID/credentials/ \
+  --profile your-aws-profile
+```
+
+**Check CloudWatch logs (all Lambdas):**
+```bash
+# Enforcement Lambda
+aws logs tail /aws/lambda/iam-access-key-enforcement --follow --profile your-aws-profile
+
+# Download Tracker
+aws logs tail /aws/lambda/iam-key-download-tracker --follow --profile your-aws-profile
+
+# URL Regenerator
+aws logs tail /aws/lambda/iam-key-url-regenerator --follow --profile your-aws-profile
+
+# Cleanup Lambda
+aws logs tail /aws/lambda/iam-key-cleanup --follow --profile your-aws-profile
 ```

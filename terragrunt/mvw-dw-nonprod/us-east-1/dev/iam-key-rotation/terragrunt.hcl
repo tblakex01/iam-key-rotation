@@ -36,8 +36,11 @@ terraform {
   extra_arguments "source_paths" {
     commands = ["plan", "apply", "destroy"]
     env_vars = {
-      TF_VAR_lambda_source_dir = "${get_repo_root()}/lambda/access_key_enforcement"
-      TF_VAR_scripts_path      = "${get_repo_root()}/scripts"
+      TF_VAR_lambda_source_dir             = "${get_repo_root()}/lambda/access_key_enforcement"
+      TF_VAR_download_tracker_source_dir   = "${get_repo_root()}/lambda/download_tracker"
+      TF_VAR_url_regenerator_source_dir    = "${get_repo_root()}/lambda/url_regenerator"
+      TF_VAR_cleanup_source_dir            = "${get_repo_root()}/lambda/cleanup"
+      TF_VAR_scripts_path                  = "${get_repo_root()}/scripts"
     }
   }
 }

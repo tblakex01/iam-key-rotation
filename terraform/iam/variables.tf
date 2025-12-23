@@ -68,3 +68,27 @@ variable "scripts_path" {
   type        = string
   default     = "../../scripts"
 }
+
+variable "credential_retention_days" {
+  description = "Number of days to retain credentials before deleting old IAM key (14 days = 2 URLs with 7-day expiration each)"
+  type        = number
+  default     = 14
+}
+
+variable "download_tracker_source_dir" {
+  description = "Source directory for download tracker Lambda code"
+  type        = string
+  default     = "../../lambda/download_tracker"
+}
+
+variable "url_regenerator_source_dir" {
+  description = "Source directory for URL regenerator Lambda code"
+  type        = string
+  default     = "../../lambda/url_regenerator"
+}
+
+variable "cleanup_source_dir" {
+  description = "Source directory for cleanup Lambda code"
+  type        = string
+  default     = "../../lambda/cleanup"
+}

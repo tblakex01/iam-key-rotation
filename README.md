@@ -17,11 +17,13 @@
 
 ## 🌟 Features
 
-### 🔄 **Automated Key Rotation Enforcement**
-- **90-day compliance policy** with automated monitoring
-- **Lambda-powered enforcement** with daily compliance checks
-- **Smart notifications** at 75, 85, and 90+ day thresholds
-- **Automatic key disabling** for expired credentials (configurable)
+### 🔄 **Fully Automated Key Rotation System**
+- **Automated key creation** with secure S3 storage and encrypted credentials
+- **Pre-signed download URLs** with 7-day expiration and one-time use
+- **14-day retention workflow** with automatic cleanup
+- **Download tracking** via CloudTrail S3 Data Events
+- **Smart reminders** at day 7 if credentials not downloaded
+- **DynamoDB tracking** for complete rotation lifecycle management
 - **User exemption system** via AWS tags
 
 ### 🛡️ **Self-Service Security Tools**
@@ -97,42 +99,59 @@ terraform init && terraform apply
 ```mermaid
 graph TB
     subgraph "AWS Cloud"
-        subgraph "Monitoring & Enforcement"
-            Lambda[🔧 Lambda Function<br/>Key Enforcement]
-            CW[📊 CloudWatch<br/>Metrics & Alarms]
-            SES[📧 SES<br/>Notifications]
-            EventBridge[⏰ EventBridge<br/>Daily Trigger]
+        subgraph "Lambda Functions"
+            Enforcement[🔧 Enforcement Lambda<br/>Creates New Keys]
+            DownloadTracker[� Download Tracker<br/>S3 Event Monitoring]
+            URLRegenerator[� URL Regenerator<br/>Day 7 Reminders]
+            Cleanup[🗑️ Cleanup Lambda<br/>Day 14 Deletion]
         end
         
-        subgraph "IAM Resources"
-            Users[👥 IAM Users]
-            Keys[🔑 Access Keys]
-            Policies[📋 Policies]
+        subgraph "Storage & Data"
+            S3Creds[�️ S3 Credentials<br/>Encrypted Keys]
+            S3Trail[�️ S3 CloudTrail<br/>Audit Logs]
+            DynamoDB[(� DynamoDB<br/>Rotation Tracking)]
         end
         
-        subgraph "Data & Reports"
-            CredReport[📄 Credential Report]
-            S3[🗄️ S3 Bucket<br/>Audit Logs]
+        subgraph "Event Processing"
+            EventBridge[⏰ EventBridge Rules<br/>Scheduled Triggers]
+            CloudTrail[� CloudTrail<br/>S3 Data Events]
+        end
+        
+        subgraph "IAM & Monitoring"
+            IAM[👥 IAM Users & Keys]
+            SES[📧 SES Email]
+            CW[� CloudWatch<br/>Metrics & Logs]
         end
     end
     
-    subgraph "User Tools"
-        KeyRotation[🔄 Key Rotation Script]
-        PasswordReset[🔑 Password Reset Tool]
-        ComplianceReport[📊 Compliance Reports]
-    end
+    EventBridge -->|Daily| Enforcement
+    EventBridge -->|Day 7| URLRegenerator
+    EventBridge -->|Day 14| Cleanup
     
-    EventBridge --> Lambda
-    Lambda --> CredReport
-    Lambda --> CW
-    Lambda --> SES
-    Lambda --> Keys
+    Enforcement -->|Create Keys| IAM
+    Enforcement -->|Store Encrypted| S3Creds
+    Enforcement -->|Track| DynamoDB
+    Enforcement -->|Send Email| SES
     
-    KeyRotation --> Keys
-    PasswordReset --> Users
-    ComplianceReport --> CredReport
+    S3Creds -->|GetObject Events| CloudTrail
+    CloudTrail -->|Trigger| EventBridge
+    EventBridge -->|Invoke| DownloadTracker
+    DownloadTracker -->|Update & Delete| DynamoDB
+    DownloadTracker -->|Delete File| S3Creds
     
-    CW --> S3
+    URLRegenerator -->|Query Expiring| DynamoDB
+    URLRegenerator -->|Regenerate URL| S3Creds
+    URLRegenerator -->|Send Reminder| SES
+    
+    Cleanup -->|Scan Old Keys| DynamoDB
+    Cleanup -->|Delete Old Key| IAM
+    Cleanup -->|Mark Complete| DynamoDB
+    
+    CloudTrail -->|Store Logs| S3Trail
+    Enforcement --> CW
+    DownloadTracker --> CW
+    URLRegenerator --> CW
+    Cleanup --> CW
 ```
 
 </div>
@@ -141,19 +160,59 @@ graph TB
 
 | Component | Purpose | Technology |
 |-----------|---------|------------|
-| **Lambda Enforcement** | Automated key monitoring and enforcement | Python 3.11, Boto3 |
-| **Self-Service Scripts** | User-friendly key and password management | Python, Rich UI |
-| **Compliance Engine** | Real-time compliance monitoring and reporting | Python, AWS APIs |
-| **Infrastructure** | Automated deployment and configuration | Terraform, CloudFormation |
-| **Monitoring** | Metrics, alarms, and observability | CloudWatch, SNS |
+| **Enforcement Lambda** | Creates new keys, stores in S3, initiates rotation | Python 3.11, Boto3 |
+| **Download Tracker Lambda** | Monitors S3 downloads, deletes files, updates DynamoDB | Python 3.11, CloudTrail Events |
+| **URL Regenerator Lambda** | Sends day 7 reminders with renewed download URLs | Python 3.11, DynamoDB Queries |
+| **Cleanup Lambda** | Deletes old keys after 14 days, marks complete | Python 3.11, DynamoDB Scans |
+| **S3 Credentials Storage** | Encrypted credential files with pre-signed URLs | S3, AES-256 Encryption |
+| **DynamoDB Tracking** | Complete rotation lifecycle and download status | DynamoDB, GSI Indexes |
+| **CloudTrail Monitoring** | S3 Data Events for download detection | CloudTrail, EventBridge |
+| **Self-Service Scripts** | Legacy manual key and password management tools | Python, Rich UI |
 
 ---
 
 ## 📚 Documentation
 
-### 🔄 Self-Service Key Rotation
+### ⚡ Automated Rotation Workflow
 
-Rotate your AWS access keys safely with guided workflows:
+**The system automatically handles the complete key rotation lifecycle:**
+
+#### **Day 0: Key Rotation Initiated**
+1. Enforcement Lambda detects old key (≥ threshold)
+2. Creates new IAM access key
+3. Encrypts and stores credentials in S3
+4. Generates 7-day pre-signed download URL
+5. Creates DynamoDB tracking record
+6. Sends email with download link
+
+#### **Day 1-7: Download Window**
+- User clicks download link
+- CloudTrail captures S3 GetObject event
+- Download Tracker Lambda triggered
+- Marks `downloaded: true` in DynamoDB
+- Deletes S3 credentials file immediately
+
+#### **Day 7: Reminder (if not downloaded)**
+- URL Regenerator Lambda queries DynamoDB
+- Checks if credentials file still exists in S3
+- Generates new 7-day pre-signed URL
+- Sends reminder email with renewed link
+
+#### **Day 14: Cleanup**
+- Cleanup Lambda scans for old keys
+- Deletes original (old) IAM access key
+- Updates DynamoDB status to `completed`
+- Marks `old_key_deleted: true`
+
+**📊 Complete tracking in DynamoDB with composite keys and GSI indexes for efficient queries.**
+
+---
+
+### 🔄 Legacy Self-Service Key Rotation
+
+**Note:** These scripts provide manual key rotation. The automated system above is now the primary method.
+
+Rotate your AWS access keys manually with guided workflows:
 
 ```bash
 # View current keys with age indicators
@@ -234,30 +293,66 @@ python3 scripts/aws_iam_compliance_report.py --summary-only
 
 ### 🚀 Infrastructure Deployment
 
-Deploy the complete enforcement infrastructure:
+Deploy the complete automated rotation infrastructure using Terragrunt:
 
 ```bash
-cd terraform/iam
+# Navigate to your environment
+cd terragrunt/mvw-dw-nonprod/us-east-1/dev/iam-key-rotation
 
-# Configure variables (optional)
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your settings
+# Review configuration
+cat config.hcl
 
-# Deploy infrastructure
-terraform init
-terraform plan
-terraform apply
+# Deploy all infrastructure (4 Lambdas, S3, DynamoDB, CloudTrail, EventBridge)
+terragrunt init
+terragrunt plan
+terragrunt apply
+
+# Test the system
+aws lambda invoke \
+  --function-name iam-access-key-enforcement \
+  --profile dw-nonprod \
+  --region us-east-1 \
+  /tmp/test-output.json
+
+# Run workflow tests
+python3 tests/test_rotation_workflow.py
 ```
 
 **🎛️ Configuration Options:**
 ```hcl
-# terraform.tfvars
-warning_threshold  = 75    # Days before warning
-urgent_threshold   = 85    # Days before urgent notice
-disable_threshold  = 90    # Days before auto-disable
-auto_disable      = true   # Enable automatic disabling
-sender_email      = "security@yourcompany.com"
+# config.hcl
+locals {
+  # Key Rotation Thresholds (days)
+  warning_threshold    = 75    # Trigger rotation at 75 days
+  urgent_threshold     = 85    # Urgent notice at 85 days
+  disable_threshold    = 90    # Delete old key after rotation
+  auto_disable         = false # Manual deletion (safer for testing)
+  
+  # Email Configuration
+  sender_email         = "security@yourcompany.com"
+  
+  # System Settings
+  schedule_expression  = "rate(1 day)"    # Daily enforcement checks
+  exemption_tag        = "key-rotation-exempt"
+  
+  # Test Users (for dev/testing only)
+  user_info = {
+    "test-user-1" = {
+      email = "your-email@company.com"
+      user_tags = { "purpose" = "testing" }
+    }
+  }
+}
 ```
+
+**📦 Deployed Infrastructure:**
+- 4 Lambda functions (enforcement, download_tracker, url_regenerator, cleanup)
+- 2 S3 buckets (credentials storage, CloudTrail logs)
+- 1 DynamoDB table with GSI indexes
+- CloudTrail S3 Data Events trail
+- 3 EventBridge rules (daily, day-7, day-14)
+- CloudWatch log groups and alarms
+- IAM roles with least-privilege policies
 
 ---
 
@@ -342,15 +437,21 @@ The project includes a complete GitHub Actions workflow:
 
 ### 📊 CloudWatch Metrics
 
-The Lambda function publishes metrics to the `IAM/KeyRotation` namespace:
+The enforcement Lambda publishes metrics to the `IAM/KeyRotation` namespace:
 
 | Metric | Description |
 |--------|-------------|
-| `total_keys` | Total number of active access keys |
-| `warning_keys` | Keys approaching expiration (75+ days) |
-| `urgent_keys` | Keys requiring immediate attention (85+ days) |
-| `expired_keys` | Keys past expiration threshold (90+ days) |
-| `disabled_keys` | Keys automatically disabled |
+| `total_keys` | Total number of active access keys processed |
+| `warning_keys` | Keys triggering rotation (≥ warning threshold) |
+| `urgent_keys` | Keys at urgent threshold |
+| `expired_keys` | Keys at disable threshold (rotation initiated) |
+| `disabled_keys` | Reserved for future auto-disable feature |
+
+**Additional Tracking:**
+- Download status tracked in DynamoDB (`downloaded: true/false`)
+- Rotation lifecycle status: `rotation_initiated`, `completed`
+- CloudWatch logs for all 4 Lambda functions
+- CloudTrail S3 Data Events for download monitoring
 
 ### 🚨 Alerting
 
