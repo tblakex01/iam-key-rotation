@@ -50,6 +50,7 @@ resource "aws_iam_role_policy" "url_regenerator_policy" {
       {
         Effect = "Allow"
         Action = [
+          "dynamodb:Scan",
           "dynamodb:Query",
           "dynamodb:UpdateItem"
         ]
@@ -98,9 +99,11 @@ resource "aws_lambda_function" "url_regenerator" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE = aws_dynamodb_table.key_rotation_tracking.name
-      S3_BUCKET      = aws_s3_bucket.credentials.id
-      SENDER_EMAIL   = var.sender_email
+      DYNAMODB_TABLE         = aws_dynamodb_table.key_rotation_tracking.name
+      S3_BUCKET              = aws_s3_bucket.credentials.id
+      SENDER_EMAIL           = var.sender_email
+      NEW_KEY_RETENTION_DAYS = var.new_key_retention_days
+      OLD_KEY_RETENTION_DAYS = var.old_key_retention_days
     }
   }
 

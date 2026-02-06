@@ -40,6 +40,7 @@ terraform {
       TF_VAR_download_tracker_source_dir   = "${get_repo_root()}/lambda/download_tracker"
       TF_VAR_url_regenerator_source_dir    = "${get_repo_root()}/lambda/url_regenerator"
       TF_VAR_cleanup_source_dir            = "${get_repo_root()}/lambda/cleanup"
+      TF_VAR_s3_cleanup_source_dir         = "${get_repo_root()}/lambda/s3_cleanup"
       TF_VAR_scripts_path                  = "${get_repo_root()}/scripts"
     }
   }
@@ -51,14 +52,18 @@ inputs = {
   common_tags = local.config_vars.locals.common_tags
   
   # IAM Key Rotation Policy Configuration
-  warning_threshold   = local.config_vars.locals.warning_threshold
-  urgent_threshold    = local.config_vars.locals.urgent_threshold  
-  disable_threshold   = local.config_vars.locals.disable_threshold
-  auto_disable        = local.config_vars.locals.auto_disable
-  exemption_tag       = local.config_vars.locals.exemption_tag
-  sender_email        = local.config_vars.locals.sender_email
-  schedule_expression = local.config_vars.locals.schedule_expression
-  alarm_sns_topic     = local.config_vars.locals.alarm_sns_topic
+  warning_threshold      = local.config_vars.locals.warning_threshold
+  urgent_threshold       = local.config_vars.locals.urgent_threshold  
+  disable_threshold      = local.config_vars.locals.disable_threshold
+  auto_disable           = local.config_vars.locals.auto_disable
+  exemption_tag          = local.config_vars.locals.exemption_tag
+  sender_email           = local.config_vars.locals.sender_email
+  schedule_expression    = local.config_vars.locals.schedule_expression
+  alarm_sns_topic        = local.config_vars.locals.alarm_sns_topic
+  
+  # Retention Configuration
+  new_key_retention_days = local.config_vars.locals.new_key_retention_days
+  old_key_retention_days = local.config_vars.locals.old_key_retention_days
   
   # Test Users Configuration (SAFE FOR TESTING)
   user_info = local.config_vars.locals.user_info

@@ -149,7 +149,8 @@ resource "aws_lambda_function" "access_key_enforcement" {
       EXEMPTION_TAG          = var.exemption_tag
       S3_BUCKET              = "iam-credentials-${data.aws_caller_identity.current.account_id}"
       DYNAMODB_TABLE         = "iam-key-rotation-tracking"
-      CREDENTIAL_RETENTION_DAYS = var.credential_retention_days
+      NEW_KEY_RETENTION_DAYS = var.new_key_retention_days
+      OLD_KEY_RETENTION_DAYS = var.old_key_retention_days
     }
   }
 

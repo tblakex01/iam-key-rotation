@@ -76,7 +76,8 @@ SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "cloud-admins@jennasrunbooks.com")
 EXEMPTION_TAG = os.environ.get("EXEMPTION_TAG", "key-rotation-exempt")
 S3_BUCKET = os.environ.get("S3_BUCKET")
 DYNAMODB_TABLE = os.environ.get("DYNAMODB_TABLE")
-CREDENTIAL_RETENTION_DAYS = int(os.environ.get("CREDENTIAL_RETENTION_DAYS", "14"))
+NEW_KEY_RETENTION_DAYS = int(os.environ.get("NEW_KEY_RETENTION_DAYS", "45"))
+OLD_KEY_RETENTION_DAYS = int(os.environ.get("OLD_KEY_RETENTION_DAYS", "30"))
 
 
 def lambda_handler(event, context):  # noqa: ARG001
@@ -326,7 +327,7 @@ def create_and_store_new_key(username, old_key_id, email):
             "Instructions": [
                 "Download this file immediately - it will be deleted after download",
                 "Update your applications with the new credentials",
-                f"Your old key ({old_key_id}) will be automatically deleted after {CREDENTIAL_RETENTION_DAYS} days"
+                f"Your old key ({old_key_id}) will be automatically deleted after {OLD_KEY_RETENTION_DAYS} days"
             ]
         }
         
@@ -374,7 +375,7 @@ def create_and_store_new_key(username, old_key_id, email):
                 "download_url": download_url,
                 "url_expires_at": int(url_expires),
                 "current_url_expires": rotation_timestamp,
-                "old_key_deletion_date": int((datetime.now().timestamp() + (CREDENTIAL_RETENTION_DAYS * 86400))),
+                "old_key_deletion_date": int((datetime.now().timestamp() + (OLD_KEY_RETENTION_DAYS * 86400))),
                 "downloaded": False,
                 "download_timestamp": None,
                 "download_ip": None,
@@ -409,10 +410,10 @@ def send_notification(notification):
     
     # Calculate old key deletion date
     old_key_deletion_date = datetime.fromtimestamp(
-        datetime.now().timestamp() + (CREDENTIAL_RETENTION_DAYS * 86400)
+        datetime.now().timestamp() + (OLD_KEY_RETENTION_DAYS * 86400)
     ).strftime("%B %d, %Y")
 
-    subject = "🔐 ACTION REQUIRED: New AWS Access Key Available"
+    subject = "[AWS-IAM-CREDS] Day 0 - Action Required: Download Your New Access Key"
 
     html_body = f"""<!DOCTYPE html>
 <html>

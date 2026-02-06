@@ -25,6 +25,10 @@ locals {
   schedule_expression  = "rate(6 hours)"  # More frequent for testing (use "rate(1 day)" for prod)
   alarm_sns_topic      = ""     # Auto-create SNS topic (or specify existing ARN)
   
+  # New Key Retention Configuration (NEW - Production values: 45/30)
+  new_key_retention_days = 45   # Days to keep new credentials in S3 with 7-day reminders (45 = 6 reminders)
+  old_key_retention_days = 30   # Days before deleting old IAM key after rotation
+  
   # Test Users Configuration - UPDATE WITH YOUR EMAIL AND USER NAMES
   user_info = {
     "iam-test-user-dev-1" = {

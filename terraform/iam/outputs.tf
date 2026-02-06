@@ -127,13 +127,15 @@ output "cleanup_function_arn" {
 output "key_rotation_system_summary" {
   description = "Complete summary of the automated key rotation system"
   value = {
-    enforcement_lambda    = aws_lambda_function.access_key_enforcement.function_name
-    download_tracker      = aws_lambda_function.download_tracker.function_name
-    url_regenerator       = aws_lambda_function.url_regenerator.function_name
-    cleanup_lambda        = aws_lambda_function.cleanup.function_name
-    credentials_bucket    = aws_s3_bucket.credentials.id
-    tracking_table        = aws_dynamodb_table.key_rotation_tracking.name
-    retention_days        = var.credential_retention_days
-    sender_email          = var.sender_email
+    enforcement_lambda      = aws_lambda_function.access_key_enforcement.function_name
+    download_tracker        = aws_lambda_function.download_tracker.function_name
+    url_regenerator         = aws_lambda_function.url_regenerator.function_name
+    cleanup_lambda          = aws_lambda_function.cleanup.function_name
+    s3_cleanup_lambda       = aws_lambda_function.s3_cleanup.function_name
+    credentials_bucket      = aws_s3_bucket.credentials.id
+    tracking_table          = aws_dynamodb_table.key_rotation_tracking.name
+    new_key_retention_days  = var.new_key_retention_days
+    old_key_retention_days  = var.old_key_retention_days
+    sender_email            = var.sender_email
   }
 }

@@ -28,13 +28,16 @@ ses = boto3.client("ses")
 DYNAMODB_TABLE = os.environ.get("DYNAMODB_TABLE", "iam-key-rotation-tracking")
 S3_BUCKET = os.environ.get("S3_BUCKET")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
+NEW_KEY_RETENTION_DAYS = int(os.environ.get("NEW_KEY_RETENTION_DAYS", "45"))
+OLD_KEY_RETENTION_DAYS = int(os.environ.get("OLD_KEY_RETENTION_DAYS", "30"))
 
 table = dynamodb.Table(DYNAMODB_TABLE)
 
 
 def lambda_handler(event, context):
     """
-    Check for expiring URLs and regenerate for non-downloaded credentials.
+    Check for records needing reminders (every 7 days) and regenerate URLs.
+    Dynamic: calculates reminder days based on NEW_KEY_RETENTION_DAYS.
     
     Args:
         event: EventBridge scheduled event
@@ -43,41 +46,52 @@ def lambda_handler(event, context):
     Returns:
         dict: Response with regeneration statistics
     """
-    logger.info("URL regenerator started")
+    logger.info(f"URL regenerator started (retention: {NEW_KEY_RETENTION_DAYS} days)")
     
-    today = datetime.utcnow().date().isoformat()
-    
-    # Query for URLs expiring today
+    # Scan all records to check if they need reminders
+    # We check if days_since_rotation is a multiple of 7 and < NEW_KEY_RETENTION_DAYS
     try:
-        response = table.query(
-            IndexName="url-expiration-index",
-            KeyConditionExpression="current_url_expires = :today",
-            FilterExpression="downloaded = :false",
+        response = table.scan(
+            FilterExpression="downloaded = :false AND attribute_exists(rotation_initiated)",
             ExpressionAttributeValues={
-                ":today": today,
                 ":false": False
             }
         )
         
         items = response.get("Items", [])
-        logger.info(f"Found {len(items)} expiring URLs for non-downloaded credentials")
+        logger.info(f"Found {len(items)} non-downloaded credentials to check")
         
     except ClientError as e:
-        logger.error(f"Error querying DynamoDB: {e}")
+        logger.error(f"Error scanning DynamoDB: {e}")
         return {
             "statusCode": 500,
             "body": json.dumps({"error": str(e)})
         }
     
-    regenerated = 0
+    reminded = 0
+    skipped = 0
     errors = []
+    
+    now = datetime.utcnow()
     
     for item in items:
         try:
-            regenerate_url_and_notify(item)
-            regenerated += 1
+            # Calculate days since rotation
+            rotation_timestamp = item.get("rotation_initiated")
+            rotation_date = datetime.fromisoformat(rotation_timestamp)
+            days_since_rotation = (now - rotation_date).days
+            
+            # Check if this is a reminder day (7, 14, 21, 28, 35, 42...)
+            # Only send if days is a multiple of 7 and less than retention period
+            if days_since_rotation % 7 == 0 and 0 < days_since_rotation < NEW_KEY_RETENTION_DAYS:
+                logger.info(f"Sending day {days_since_rotation} reminder for {item.get('username')}")
+                regenerate_url_and_notify(item, days_since_rotation)
+                reminded += 1
+            else:
+                skipped += 1
+                
         except Exception as e:
-            error_msg = f"Error regenerating URL for {item.get('username')}: {str(e)}"
+            error_msg = f"Error processing {item.get('username')}: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
     
@@ -86,21 +100,23 @@ def lambda_handler(event, context):
         "body": json.dumps({
             "message": "URL regeneration completed",
             "checked": len(items),
-            "regenerated": regenerated,
+            "reminded": reminded,
+            "skipped": skipped,
             "errors": errors if errors else None
         })
     }
     
-    logger.info(f"URL regenerator completed: {regenerated}/{len(items)} regenerated")
+    logger.info(f"URL regenerator completed: {reminded} reminders sent, {skipped} skipped")
     return response
 
 
-def regenerate_url_and_notify(item):
+def regenerate_url_and_notify(item, days_since_rotation):
     """
     Regenerate pre-signed URL and send reminder email.
     
     Args:
         item: DynamoDB tracking record
+        days_since_rotation: Number of days since rotation started
     """
     username = item.get("username")
     email = item.get("email")
@@ -164,7 +180,7 @@ def regenerate_url_and_notify(item):
                 ":empty_list": [],
                 ":new_email": [{
                     "sent_at": datetime.utcnow().isoformat(),
-                    "type": "reminder_day_7",
+                    "type": f"reminder_day_{days_since_rotation}",
                     "ses_message_id": None  # Will be updated after send
                 }]
             }
@@ -180,13 +196,14 @@ def regenerate_url_and_notify(item):
         presigned_url=presigned_url,
         old_key_id=old_key_id,
         new_expiration=new_expiration,
-        old_key_deletion_date=old_key_deletion_date
+        old_key_deletion_date=old_key_deletion_date,
+        days_since_rotation=days_since_rotation
     )
     
     logger.info(f"URL regenerated and reminder sent for {username}")
 
 
-def send_reminder_email(username, email, presigned_url, old_key_id, new_expiration, old_key_deletion_date):
+def send_reminder_email(username, email, presigned_url, old_key_id, new_expiration, old_key_deletion_date, days_since_rotation):
     """
     Send reminder email with new download link.
     
@@ -197,8 +214,9 @@ def send_reminder_email(username, email, presigned_url, old_key_id, new_expirati
         old_key_id: Old access key ID
         new_expiration: New URL expiration date
         old_key_deletion_date: When old key will be deleted
+        days_since_rotation: Number of days since rotation for subject line
     """
-    subject = "⏰ REMINDER: AWS Credentials Expiring in 7 Days"
+    subject = f"[AWS-IAM-CREDS] Day {days_since_rotation} Reminder - Action Required: Download Your New Access Key"
     
     html_body = f"""
 <!DOCTYPE html>

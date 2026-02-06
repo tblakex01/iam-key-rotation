@@ -65,6 +65,26 @@ resource "aws_iam_role_policy" "cleanup_policy" {
           "cloudwatch:PutMetricData"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "ses:FromAddress" = var.sender_email
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:HeadObject"
+        ]
+        Resource = "arn:aws:s3:::iam-credentials-${data.aws_caller_identity.current.account_id}/*"
       }
     ]
   })
@@ -91,8 +111,10 @@ resource "aws_lambda_function" "cleanup" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE     = aws_dynamodb_table.key_rotation_tracking.name
-      RETENTION_DAYS     = var.credential_retention_days
+      DYNAMODB_TABLE         = aws_dynamodb_table.key_rotation_tracking.name
+      OLD_KEY_RETENTION_DAYS = var.old_key_retention_days
+      SENDER_EMAIL           = var.sender_email
+      S3_BUCKET              = "iam-credentials-${data.aws_caller_identity.current.account_id}"
     }
   }
 
