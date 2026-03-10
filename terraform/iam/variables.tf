@@ -56,3 +56,51 @@ variable "alarm_sns_topic" {
   type        = string
   default     = ""
 }
+
+variable "lambda_source_dir" {
+  description = "Source directory for Lambda function code"
+  type        = string
+  default     = "../../lambda/access_key_enforcement"
+}
+
+variable "scripts_path" {
+  description = "Path to the scripts directory for provisioners"
+  type        = string
+  default     = "../../scripts"
+}
+
+variable "new_key_retention_days" {
+  description = "Number of days to retain new key credentials in S3 with 7-day reminders (default: 45 days = 6 reminders)"
+  type        = number
+  default     = 45
+}
+
+variable "old_key_retention_days" {
+  description = "Number of days before deleting old IAM access key after rotation (default: 30 days)"
+  type        = number
+  default     = 30
+}
+
+variable "download_tracker_source_dir" {
+  description = "Source directory for download tracker Lambda code"
+  type        = string
+  default     = "../../lambda/download_tracker"
+}
+
+variable "url_regenerator_source_dir" {
+  description = "Source directory for URL regenerator Lambda code"
+  type        = string
+  default     = "../../lambda/url_regenerator"
+}
+
+variable "cleanup_source_dir" {
+  description = "Source directory for old key cleanup Lambda code"
+  type        = string
+  default     = "../../lambda/cleanup"
+}
+
+variable "s3_cleanup_source_dir" {
+  description = "Source directory for S3 file cleanup Lambda code (day 45 expiration)"
+  type        = string
+  default     = "../../lambda/s3_cleanup"
+}

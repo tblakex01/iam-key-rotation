@@ -5,7 +5,7 @@ data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
 # Lambda execution role
-resource "aws_iam_role" "lambda_execution_role" {
+resource "aws_iam_role" "lambda_exec" {
   name = "iam-key-enforcement-lambda-role"
 
   assume_role_policy = jsonencode({
@@ -51,9 +51,28 @@ resource "aws_iam_policy" "lambda_iam_policy" {
           "iam:GetCredentialReport",
           "iam:ListAccessKeys",
           "iam:ListUserTags",
-          "iam:UpdateAccessKey"
+          "iam:UpdateAccessKey",
+          "iam:CreateAccessKey",
+          "iam:GetUser"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject"
+        ]
+        Resource = "arn:aws:s3:::iam-credentials-${data.aws_caller_identity.current.account_id}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:GetItem"
+        ]
+        Resource = "arn:aws:dynamodb:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:table/iam-key-rotation-tracking"
       },
       {
         Effect = "Allow"
@@ -68,6 +87,7 @@ resource "aws_iam_policy" "lambda_iam_policy" {
         }
       },
       {
+        Sid    = "PublishCloudWatchMetrics"
         Effect = "Allow"
         Action = [
           "cloudwatch:PutMetricData"
@@ -78,6 +98,15 @@ resource "aws_iam_policy" "lambda_iam_policy" {
             "cloudwatch:namespace" = "IAM/KeyRotation"
           }
         }
+      },
+      {
+        Sid    = "DecryptEnvironmentVariables"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = "arn:aws:kms:us-east-1:056598616360:key/e53fd7d2-e8fe-4f7f-b9ad-ecfcd5aac772"
       }
     ]
   })
@@ -88,13 +117,13 @@ resource "aws_iam_policy" "lambda_iam_policy" {
 # Attach policy to role
 resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
   policy_arn = aws_iam_policy.lambda_iam_policy.arn
-  role       = aws_iam_role.lambda_execution_role.name
+  role       = aws_iam_role.lambda_exec.name
 }
 
 # Package Lambda function
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_dir  = "../../lambda/access_key_enforcement"
+  source_dir  = var.lambda_source_dir
   output_path = "access_key_enforcement.zip"
   excludes    = ["__pycache__", "*.pyc"]
 }
@@ -103,7 +132,7 @@ data "archive_file" "lambda_zip" {
 resource "aws_lambda_function" "access_key_enforcement" {
   filename         = data.archive_file.lambda_zip.output_path
   function_name    = "iam-access-key-enforcement"
-  role             = aws_iam_role.lambda_execution_role.arn
+  role             = aws_iam_role.lambda_exec.arn
   handler          = "access_key_enforcement.lambda_handler"
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   runtime          = "python3.11"
@@ -112,12 +141,16 @@ resource "aws_lambda_function" "access_key_enforcement" {
 
   environment {
     variables = {
-      WARNING_THRESHOLD = var.warning_threshold
-      URGENT_THRESHOLD  = var.urgent_threshold
-      DISABLE_THRESHOLD = var.disable_threshold
-      AUTO_DISABLE      = var.auto_disable
-      SENDER_EMAIL      = var.sender_email
-      EXEMPTION_TAG     = var.exemption_tag
+      WARNING_THRESHOLD      = var.warning_threshold
+      URGENT_THRESHOLD       = var.urgent_threshold
+      DISABLE_THRESHOLD      = var.disable_threshold
+      AUTO_DISABLE           = var.auto_disable
+      SENDER_EMAIL           = var.sender_email
+      EXEMPTION_TAG          = var.exemption_tag
+      S3_BUCKET              = "iam-credentials-${data.aws_caller_identity.current.account_id}"
+      DYNAMODB_TABLE         = "iam-key-rotation-tracking"
+      NEW_KEY_RETENTION_DAYS = var.new_key_retention_days
+      OLD_KEY_RETENTION_DAYS = var.old_key_retention_days
     }
   }
 

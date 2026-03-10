@@ -23,6 +23,8 @@ logger.setLevel(logging.INFO)
 iam_client = None
 ses_client = None
 cloudwatch = None
+s3_client = None
+dynamodb = None
 
 
 def get_iam_client():
@@ -49,6 +51,22 @@ def get_cloudwatch_client():
     return cloudwatch
 
 
+def get_s3_client():
+    """Return a boto3 S3 client, creating it if needed."""
+    global s3_client
+    if s3_client is None:
+        s3_client = boto3.client("s3")
+    return s3_client
+
+
+def get_dynamodb_resource():
+    """Return a boto3 DynamoDB resource, creating it if needed."""
+    global dynamodb
+    if dynamodb is None:
+        dynamodb = boto3.resource("dynamodb")
+    return dynamodb
+
+
 # Configuration from environment variables
 WARNING_THRESHOLD = int(os.environ.get("WARNING_THRESHOLD", "75"))
 URGENT_THRESHOLD = int(os.environ.get("URGENT_THRESHOLD", "85"))
@@ -56,6 +74,10 @@ DISABLE_THRESHOLD = int(os.environ.get("DISABLE_THRESHOLD", "90"))
 AUTO_DISABLE = os.environ.get("AUTO_DISABLE", "false").lower() == "true"
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "cloud-admins@jennasrunbooks.com")
 EXEMPTION_TAG = os.environ.get("EXEMPTION_TAG", "key-rotation-exempt")
+S3_BUCKET = os.environ.get("S3_BUCKET")
+DYNAMODB_TABLE = os.environ.get("DYNAMODB_TABLE")
+NEW_KEY_RETENTION_DAYS = int(os.environ.get("NEW_KEY_RETENTION_DAYS", "45"))
+OLD_KEY_RETENTION_DAYS = int(os.environ.get("OLD_KEY_RETENTION_DAYS", "30"))
 
 
 def lambda_handler(event, context):  # noqa: ARG001
@@ -194,7 +216,7 @@ def get_access_key_id(username, key_index):
 
 
 def process_key(username, key_id, last_rotated, notifications, metrics):
-    """Process a single access key"""
+    """Process a single access key - create new key and initiate rotation"""
     if not key_id:
         return
 
@@ -215,58 +237,57 @@ def process_key(username, key_id, last_rotated, notifications, metrics):
     # Check thresholds and take action
     if key_age >= DISABLE_THRESHOLD:
         metrics["expired_keys"] += 1
-
-        if AUTO_DISABLE:
-            disable_key(username, key_id)
-            metrics["disabled_keys"] += 1
-
+        # Create new key and initiate automated rotation
+        new_key_data = create_and_store_new_key(username, key_id, email)
+        if new_key_data:
             notifications.append(
                 {
                     "username": username,
                     "email": email,
-                    "key_id": key_id,
+                    "old_key_id": key_id,
                     "age": key_age,
-                    "action": "disabled",
+                    "action": "rotated",
                     "severity": "critical",
-                }
-            )
-        else:
-            notifications.append(
-                {
-                    "username": username,
-                    "email": email,
-                    "key_id": key_id,
-                    "age": key_age,
-                    "action": "expired",
-                    "severity": "critical",
+                    "download_url": new_key_data["download_url"],
+                    "url_expires": new_key_data["url_expires"],
                 }
             )
 
     elif key_age >= URGENT_THRESHOLD:
         metrics["urgent_keys"] += 1
-        notifications.append(
-            {
-                "username": username,
-                "email": email,
-                "key_id": key_id,
-                "age": key_age,
-                "action": "urgent",
-                "severity": "high",
-            }
-        )
+        # Create new key for urgent rotations
+        new_key_data = create_and_store_new_key(username, key_id, email)
+        if new_key_data:
+            notifications.append(
+                {
+                    "username": username,
+                    "email": email,
+                    "old_key_id": key_id,
+                    "age": key_age,
+                    "action": "rotated",
+                    "severity": "high",
+                    "download_url": new_key_data["download_url"],
+                    "url_expires": new_key_data["url_expires"],
+                }
+            )
 
     elif key_age >= WARNING_THRESHOLD:
         metrics["warning_keys"] += 1
-        notifications.append(
-            {
-                "username": username,
-                "email": email,
-                "key_id": key_id,
-                "age": key_age,
-                "action": "warning",
-                "severity": "medium",
-            }
-        )
+        # Create new key for warning rotations
+        new_key_data = create_and_store_new_key(username, key_id, email)
+        if new_key_data:
+            notifications.append(
+                {
+                    "username": username,
+                    "email": email,
+                    "old_key_id": key_id,
+                    "age": key_age,
+                    "action": "rotated",
+                    "severity": "medium",
+                    "download_url": new_key_data["download_url"],
+                    "url_expires": new_key_data["url_expires"],
+                }
+            )
 
 
 def get_user_email(username):
@@ -282,80 +303,182 @@ def get_user_email(username):
     return None
 
 
-def disable_key(username, key_id):
-    """Disable an access key"""
+def create_and_store_new_key(username, old_key_id, email):
+    """Create new access key, store in S3, generate pre-signed URL, track in DynamoDB"""
     try:
         iam = get_iam_client()
-        iam.update_access_key(UserName=username, AccessKeyId=key_id, Status="Inactive")
-        logger.info(f"Disabled access key {key_id} for user {username}")
+        
+        # Create new access key
+        response = iam.create_access_key(UserName=username)
+        new_key = response["AccessKey"]
+        new_key_id = new_key["AccessKeyId"]
+        secret_key = new_key["SecretAccessKey"]
+        
+        logger.info(f"Created new access key {new_key_id} for user {username}")
+        
+        # Prepare credentials JSON
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        credentials = {
+            "AccessKeyId": new_key_id,
+            "SecretAccessKey": secret_key,
+            "Username": username,
+            "CreatedAt": timestamp,
+            "OldKeyId": old_key_id,
+            "Instructions": [
+                "Download this file immediately - it will be deleted after download",
+                "Update your applications with the new credentials",
+                f"Your old key ({old_key_id}) will be automatically deleted after {OLD_KEY_RETENTION_DAYS} days"
+            ]
+        }
+        
+        # Store in S3
+        s3 = get_s3_client()
+        s3_key = f"credentials/{username}/{timestamp}-credentials.json"
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=s3_key,
+            Body=json.dumps(credentials, indent=2),
+            ServerSideEncryption="AES256",
+            ContentType="application/json"
+        )
+        
+        logger.info(f"Stored credentials in S3: {s3_key}")
+        
+        # Generate pre-signed URL (7-day expiration)
+        download_url = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": S3_BUCKET, "Key": s3_key},
+            ExpiresIn=604800  # 7 days in seconds
+        )
+        
+        # Calculate URL expiration time
+        url_expires = (datetime.now().timestamp() + 604800)
+        url_expires_str = datetime.fromtimestamp(url_expires).strftime("%Y-%m-%d %H:%M:%S UTC")
+        
+        # Track in DynamoDB
+        dynamodb = get_dynamodb_resource()
+        table = dynamodb.Table(DYNAMODB_TABLE)
+        
+        rotation_timestamp = datetime.now().isoformat()
+        
+        table.put_item(
+            Item={
+                "PK": f"USER#{username}",
+                "SK": f"ROTATION#{rotation_timestamp}",
+                "username": username,
+                "email": email,
+                "old_key_id": old_key_id,
+                "new_key_id": new_key_id,
+                "s3_key": s3_key,
+                "created_at": timestamp,
+                "rotation_initiated": rotation_timestamp,
+                "download_url": download_url,
+                "url_expires_at": int(url_expires),
+                "current_url_expires": rotation_timestamp,
+                "old_key_deletion_date": int((datetime.now().timestamp() + (OLD_KEY_RETENTION_DAYS * 86400))),
+                "downloaded": False,
+                "download_timestamp": None,
+                "download_ip": None,
+                "email_sent_count": 1,
+                "old_key_deleted": False,
+                "status": "pending_download",
+                "TTL": int((datetime.now().timestamp() + (90 * 86400)))
+            }
+        )
+        
+        logger.info(f"Tracked rotation in DynamoDB for {username}")
+        
+        return {
+            "download_url": download_url,
+            "url_expires": url_expires_str,
+            "new_key_id": new_key_id
+        }
+        
     except ClientError as e:
-        logger.error(f"Error disabling key {key_id} for {username}: {e}")
+        logger.error(f"Error creating new key for {username}: {e}")
+        return None
 
 
 def send_notification(notification):
-    """Send email notification"""
+    """Send email notification with new access key download link"""
     username = notification["username"]
     email = notification["email"]
-    key_id = notification["key_id"]
+    old_key_id = notification["old_key_id"]
     age = notification["age"]
-    action = notification["action"]
+    presigned_url = notification["download_url"]
+    expiration_date = notification["url_expires"]
+    
+    # Calculate old key deletion date
+    old_key_deletion_date = datetime.fromtimestamp(
+        datetime.now().timestamp() + (OLD_KEY_RETENTION_DAYS * 86400)
+    ).strftime("%B %d, %Y")
 
-    # Determine subject and message based on action
-    if action == "disabled":
-        subject = "CRITICAL: AWS Access Key Disabled"
-        message = (
-            f"Your access key {key_id} has been automatically "
-            f"disabled after {age} days without rotation."
-        )
-    elif action == "expired":
-        subject = "CRITICAL: AWS Access Key Expired"
-        message = (
-            f"Your access key {key_id} has expired ({age} days old) "
-            f"and should be rotated immediately."
-        )
-    elif action == "urgent":
-        subject = "URGENT: AWS Access Key Rotation Required"
-        message = (
-            f"Your access key {key_id} is {age} days old and will "
-            f"expire in {DISABLE_THRESHOLD - age} days."
-        )
-    else:  # warning
-        subject = "WARNING: AWS Access Key Rotation Recommended"
-        message = (
-            f"""Your access key {key_id} is {age} days old. Please rotate it soon."""
-        )
+    subject = "[AWS-IAM-CREDS] Day 0 - Action Required: Download Your New Access Key"
 
-    html_body = f"""
-    <html>
-    <body>
-        <h2 style="color: {'red' if action in ['disabled', 'expired'] else 'orange'};">
-            {subject}
-        </h2>
-        <p>Hello {username},</p>
-        <p>{message}</p>
-
-        <h3>How to Rotate Your Access Key:</h3>
-        <ol>
-            <li>Use the self-service key rotation script:
-                <pre>python3 aws_iam_self_service_key_rotation.py -c</pre>
-            </li>
-            <li>Update your applications with the new key</li>
-            <li>Deactivate the old key:
-                <pre>python3 aws_iam_self_service_key_rotation.py -u {key_id} inactive</pre>
-            </li>
-            <li>After confirming everything works, delete the old key:
-                <pre>python3 aws_iam_self_service_key_rotation.py -d {key_id}</pre>
-            </li>
-        </ol>
-
-        <p>For assistance, please contact the Cloud Admins team.</p>
-
-        <p style="font-size: 12px; color: #666;">
-            This is an automated message from the AWS IAM Key Rotation Enforcement system.
-        </p>
-    </body>
-    </html>
-    """
+    html_body = f"""<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    
+    <h2 style="color: #232f3e;">AWS Access Key Rotation Required</h2>
+    
+    <p>Hello <strong>{username}</strong>,</p>
+    
+    <p>Your AWS access key has been rotated for security compliance. New credentials are now available for download.</p>
+    
+    <div style="background-color: #fff3cd; border: 2px solid #ff9900; border-radius: 4px; padding: 15px; margin: 20px 0;">
+      <div style="display: flex; align-items: center;">
+        <span style="font-size: 24px; margin-right: 10px;">⚠️</span>
+        <div>
+          <strong style="color: #cc0000; font-size: 16px;">IMPORTANT: ONE-TIME DOWNLOAD ONLY</strong>
+          <p style="margin: 5px 0 0 0; color: #856404;">
+            This link can only be used <strong>ONCE</strong>. After clicking, the credentials file will be permanently deleted from our servers for security. 
+            <strong>Save the file immediately</strong> after download.
+          </p>
+        </div>
+      </div>
+    </div>
+    
+    <div style="background-color: #f8f9fa; border-left: 4px solid #232f3e; padding: 15px; margin: 20px 0;">
+      <p style="margin: 0;"><strong>Old Key ID:</strong> <code>{old_key_id}</code></p>
+      <p style="margin: 5px 0;"><strong>Key Age:</strong> {age} days</p>
+      <p style="margin: 5px 0;"><strong>Link Expires:</strong> {expiration_date}</p>
+    </div>
+    
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="{presigned_url}" 
+         style="background-color: #ff9900; color: white; padding: 15px 30px; text-decoration: none; 
+                border-radius: 4px; font-size: 16px; font-weight: bold; display: inline-block;">
+        📥 Download New Credentials (One-Time Only)
+      </a>
+    </div>
+    
+    <div style="background-color: #e7f3ff; border-left: 4px solid #0073bb; padding: 15px; margin: 20px 0;">
+      <h3 style="margin-top: 0; color: #0073bb;">📋 Next Steps:</h3>
+      <ol style="margin: 10px 0; padding-left: 20px;">
+        <li><strong>Click the download button above ONLY when ready</strong></li>
+        <li>Save the JSON file to a secure location immediately</li>
+        <li>Update your applications with the new credentials</li>
+        <li>Verify your applications are working with the new key</li>
+        <li>Your old key (<code>{old_key_id}</code>) will be deleted on <strong>{old_key_deletion_date}</strong></li>
+      </ol>
+    </div>
+    
+    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+      <p style="font-size: 14px; color: #666;">
+        <strong>Lost the credentials?</strong> Contact your security team immediately at 
+        <a href="mailto:cloud-security@mvwc.com">cloud-security@mvwc.com</a> for assistance.
+      </p>
+      <p style="font-size: 12px; color: #999;">
+        This is an automated message from AWS IAM Key Rotation System. Do not reply to this email.
+      </p>
+    </div>
+    
+  </div>
+  
+</body>
+</html>"""
 
     try:
         ses = get_ses_client()
@@ -367,7 +490,7 @@ def send_notification(notification):
                 "Body": {"Html": {"Data": html_body}},
             },
         )
-        logger.info(f"Sent {action} notification to {username} ({email})")
+        logger.info(f"Sent rotation notification to {username} ({email})")
     except ClientError as e:
         logger.error(f"Error sending email to {username}: {e}")
 

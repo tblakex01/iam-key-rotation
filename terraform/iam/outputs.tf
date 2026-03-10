@@ -17,7 +17,7 @@ output "lambda_log_group" {
 # IAM role outputs
 output "lambda_role_arn" {
   description = "ARN of the Lambda execution role"
-  value       = aws_iam_role.lambda_execution_role.arn
+  value       = aws_iam_role.lambda_exec.arn
 }
 
 # EventBridge rule outputs
@@ -60,5 +60,82 @@ output "configuration_summary" {
     auto_disable      = var.auto_disable
     sender_email      = var.sender_email
     schedule          = var.schedule_expression
+  }
+}
+
+# Output access key information for testing
+output "test_user_access_keys" {
+  description = "Access key information for test users (for testing purposes only)"
+  value = {
+    for username, key in aws_iam_access_key.this : username => {
+      access_key_id = key.id
+      creation_date = key.create_date
+      # Note: secret is not output for security (stored in terraform state only)
+    }
+  }
+  sensitive = false
+}
+
+# Output access key secrets (marked sensitive so they don't show in logs)
+output "test_user_access_key_secrets" {
+  description = "Access key secrets for test users (sensitive - for testing only)"
+  value = {
+    for username, key in aws_iam_access_key.this : username => key.secret
+  }
+  sensitive = true
+}
+
+# S3 bucket outputs
+output "credentials_bucket_name" {
+  description = "Name of the S3 bucket storing encrypted credentials"
+  value       = aws_s3_bucket.credentials.id
+}
+
+output "credentials_bucket_arn" {
+  description = "ARN of the credentials S3 bucket"
+  value       = aws_s3_bucket.credentials.arn
+}
+
+# DynamoDB table outputs
+output "tracking_table_name" {
+  description = "Name of the DynamoDB tracking table"
+  value       = aws_dynamodb_table.key_rotation_tracking.name
+}
+
+output "tracking_table_arn" {
+  description = "ARN of the DynamoDB tracking table"
+  value       = aws_dynamodb_table.key_rotation_tracking.arn
+}
+
+# New Lambda function outputs
+output "download_tracker_function_arn" {
+  description = "ARN of the download tracker Lambda function"
+  value       = aws_lambda_function.download_tracker.arn
+}
+
+output "url_regenerator_function_arn" {
+  description = "ARN of the URL regenerator Lambda function"
+  value       = aws_lambda_function.url_regenerator.arn
+}
+
+output "cleanup_function_arn" {
+  description = "ARN of the cleanup Lambda function"
+  value       = aws_lambda_function.cleanup.arn
+}
+
+# Complete system summary
+output "key_rotation_system_summary" {
+  description = "Complete summary of the automated key rotation system"
+  value = {
+    enforcement_lambda      = aws_lambda_function.access_key_enforcement.function_name
+    download_tracker        = aws_lambda_function.download_tracker.function_name
+    url_regenerator         = aws_lambda_function.url_regenerator.function_name
+    cleanup_lambda          = aws_lambda_function.cleanup.function_name
+    s3_cleanup_lambda       = aws_lambda_function.s3_cleanup.function_name
+    credentials_bucket      = aws_s3_bucket.credentials.id
+    tracking_table          = aws_dynamodb_table.key_rotation_tracking.name
+    new_key_retention_days  = var.new_key_retention_days
+    old_key_retention_days  = var.old_key_retention_days
+    sender_email            = var.sender_email
   }
 }
