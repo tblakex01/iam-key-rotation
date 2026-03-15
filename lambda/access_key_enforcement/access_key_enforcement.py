@@ -1,25 +1,36 @@
-"""
-AWS IAM Access Key Enforcement Lambda
-Monitors and enforces 90-day access key rotation policy
-Sends notifications at 75 and 85 days, disables keys at 90+ days
-"""
+"""AWS IAM Access Key Enforcement Lambda."""
+
+from __future__ import annotations
 
 import os
-import time
-import json
-import logging
 import csv
 import io
-from datetime import datetime
-from dateutil import parser
+import json
+import logging
+import time
+from datetime import UTC, datetime
+from typing import Any
+
 import boto3
 from botocore.exceptions import ClientError
 
-# Configure logging
+from common.notifications import render_enforcement_email
+from common.rotation_common import (
+    ACTIVE_ROTATION_STATUSES,
+    PRESIGNED_URL_TTL_SECONDS,
+    ROTATION_NAMESPACE,
+    build_rotation_record,
+    credential_s3_key,
+    isoformat,
+    load_runtime_config,
+    parse_iso8601,
+    rotation_item_key,
+    utc_now,
+)
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Lazily initialized AWS clients
 iam_client = None
 ses_client = None
 cloudwatch = None
@@ -27,26 +38,12 @@ s3_client = None
 dynamodb = None
 
 
-def get_runtime_config():
-    """Load runtime configuration from environment variables."""
-    return {
-        "warning_threshold": int(os.environ.get("WARNING_THRESHOLD", "75")),
-        "urgent_threshold": int(os.environ.get("URGENT_THRESHOLD", "85")),
-        "disable_threshold": int(os.environ.get("DISABLE_THRESHOLD", "90")),
-        "auto_disable": os.environ.get("AUTO_DISABLE", "false").lower() == "true",
-        "sender_email": os.environ.get(
-            "SENDER_EMAIL", "cloud-admins@jennasrunbooks.com"
-        ),
-        "exemption_tag": os.environ.get("EXEMPTION_TAG", "key-rotation-exempt"),
-        "s3_bucket": os.environ.get("S3_BUCKET"),
-        "dynamodb_table": os.environ.get("DYNAMODB_TABLE"),
-        "new_key_retention_days": int(os.environ.get("NEW_KEY_RETENTION_DAYS", "45")),
-        "old_key_retention_days": int(os.environ.get("OLD_KEY_RETENTION_DAYS", "30")),
-    }
+def get_runtime_config() -> dict[str, Any]:
+    """Return validated runtime configuration as a plain dict for compatibility."""
+    return load_runtime_config().__dict__.copy()
 
 
 def get_iam_client():
-    """Return a boto3 IAM client, creating it if needed."""
     global iam_client
     if iam_client is None:
         iam_client = boto3.client("iam")
@@ -54,7 +51,6 @@ def get_iam_client():
 
 
 def get_ses_client():
-    """Return a boto3 SES client, creating it if needed."""
     global ses_client
     if ses_client is None:
         ses_client = boto3.client("ses")
@@ -62,7 +58,6 @@ def get_ses_client():
 
 
 def get_cloudwatch_client():
-    """Return a boto3 CloudWatch client, creating it if needed."""
     global cloudwatch
     if cloudwatch is None:
         cloudwatch = boto3.client("cloudwatch")
@@ -70,7 +65,6 @@ def get_cloudwatch_client():
 
 
 def get_s3_client():
-    """Return a boto3 S3 client, creating it if needed."""
     global s3_client
     if s3_client is None:
         s3_client = boto3.client("s3")
@@ -78,15 +72,21 @@ def get_s3_client():
 
 
 def get_dynamodb_resource():
-    """Return a boto3 DynamoDB resource, creating it if needed."""
     global dynamodb
     if dynamodb is None:
         dynamodb = boto3.resource("dynamodb")
     return dynamodb
 
 
-def build_notification(username, email, key_id, age, action, severity, key_data=None):
-    """Build a notification payload for SES delivery."""
+def build_notification(
+    username: str,
+    email: str,
+    key_id: str,
+    age: int,
+    action: str,
+    severity: str,
+    key_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     notification = {
         "username": username,
         "email": email,
@@ -97,63 +97,26 @@ def build_notification(username, email, key_id, age, action, severity, key_data=
         "severity": severity,
     }
     if key_data:
-        notification["download_url"] = key_data["download_url"]
-        notification["url_expires"] = key_data["url_expires"]
-        notification["new_key_id"] = key_data["new_key_id"]
+        notification.update(key_data)
     return notification
 
 
-def can_auto_rotate():
-    """Return whether the automated rotation path is fully configured."""
-    config = get_runtime_config()
-    return bool(config["s3_bucket"] and config["dynamodb_table"])
+def can_auto_rotate() -> bool:
+    return load_runtime_config().auto_rotation_enabled
 
 
 def lambda_handler(event, context):  # noqa: ARG001
-    """Main Lambda handler"""
-    logger.info("Starting IAM Access Key Enforcement check")
-
-    # Generate credential report
+    """Main Lambda handler."""
+    logger.info("Starting IAM access key enforcement run")
+    config = load_runtime_config()
     iam = get_iam_client()
+
     try:
-        iam.generate_credential_report()
-
-        # Wait for report generation with timeout
-        timeout_seconds = int(os.environ.get("CREDENTIAL_REPORT_TIMEOUT", "60"))
-        max_attempts = (
-            timeout_seconds // 2
-        )  # Convert seconds to attempts (2 sec intervals)
-        attempt = 0
-
-        while True:
-            attempt += 1
-            if attempt > max_attempts:
-                timeout_seconds = max_attempts * 2
-                logger.error(
-                    f"Credential report generation timed out after {timeout_seconds} seconds"
-                )
-                raise Exception(
-                    f"Credential report generation timed out after {timeout_seconds} seconds. "
-                    "AWS may be experiencing issues or the account has too many users."
-                )
-
-            # Sleep briefly before retrying; keep short to avoid slow tests
-            time.sleep(0.1)
-            response = iam.get_credential_report()
-            if "Content" in response:
-                logger.info(
-                    f"Credential report generated successfully after {attempt * 2} seconds"
-                )
-                break
-
-    except ClientError as e:
-        logger.error(f"Error generating credential report: {e}")
+        credential_report = generate_credential_report(iam)
+    except ClientError:
+        logger.exception("Failed to generate credential report")
         raise
 
-    # Process credential report
-    credential_report = response["Content"].decode("utf-8")
-
-    # Metrics tracking
     metrics = {
         "total_keys": 0,
         "warning_keys": 0,
@@ -161,51 +124,25 @@ def lambda_handler(event, context):  # noqa: ARG001
         "disabled_keys": 0,
         "expired_keys": 0,
     }
-
-    # Process each user
-    notifications = []
+    notifications: list[dict[str, Any]] = []
 
     csv_reader = csv.reader(io.StringIO(credential_report))
-    next(csv_reader)  # Skip header
+    next(csv_reader, None)
 
     for fields in csv_reader:
         if not fields:
             continue
-
         username = fields[0]
-
-        # Check if user is exempt
         if is_user_exempt(username):
-            logger.info(f"User {username} is exempt from key rotation policy")
+            logger.info("Skipping exempt user %s", username)
             continue
+        evaluate_report_slot(username, fields, 8, 9, notifications, metrics, config)
+        evaluate_report_slot(username, fields, 13, 14, notifications, metrics, config)
 
-        # Process access key 1
-        key1_active = fields[8] == "true"
-        key1_last_rotated = fields[9]
-
-        if key1_active and key1_last_rotated not in ("N/A", "not_supported"):
-            key1_id = get_access_key_id(username, 0)
-            process_key(username, key1_id, key1_last_rotated, notifications, metrics)
-
-        # Process access key 2
-        key2_active = fields[13] == "true"
-        key2_last_rotated = fields[14]
-
-        if key2_active and key2_last_rotated not in ("N/A", "not_supported"):
-            key2_id = get_access_key_id(username, 1)
-            process_key(username, key2_id, key2_last_rotated, notifications, metrics)
-
-    # Send notifications
     for notification in notifications:
         send_notification(notification)
 
-    # Publish metrics to CloudWatch
     publish_metrics(metrics)
-
-    logger.info(
-        f"Completed IAM Access Key Enforcement check. Metrics: {json.dumps(metrics)}"
-    )
-
     return {
         "statusCode": 200,
         "body": json.dumps(
@@ -218,397 +155,281 @@ def lambda_handler(event, context):  # noqa: ARG001
     }
 
 
-def is_user_exempt(username):
-    """Check if user has exemption tag"""
-    exemption_tag = get_runtime_config()["exemption_tag"]
+def generate_credential_report(iam) -> str:
+    """Generate and return the credential report CSV."""
+    iam.generate_credential_report()
+    timeout_seconds = int(os.environ.get("CREDENTIAL_REPORT_TIMEOUT", "60"))
+    max_attempts = max(timeout_seconds // 2, 1)
+
+    for _ in range(max_attempts + 1):
+        time.sleep(0.1)
+        response = iam.get_credential_report()
+        if "Content" in response:
+            return response["Content"].decode("utf-8")
+
+    raise RuntimeError(
+        f"Credential report generation timed out after {timeout_seconds} seconds"
+    )
+
+
+def evaluate_report_slot(
+    username: str,
+    fields: list[str],
+    active_index: int,
+    rotated_index: int,
+    notifications: list[dict[str, Any]],
+    metrics: dict[str, int],
+    config,
+) -> None:
+    """Process a single access-key slot from the credential report."""
+    if fields[active_index] != "true":
+        return
+    last_rotated = fields[rotated_index]
+    if last_rotated in {"N/A", "not_supported"}:
+        return
+    key_index = 0 if active_index == 8 else 1
+    key_id = get_access_key_id(username, key_index)
+    process_key(username, key_id, last_rotated, notifications, metrics, config)
+
+
+def is_user_exempt(username: str) -> bool:
+    exemption_tag = os.environ.get("EXEMPTION_TAG", "key-rotation-exempt")
     try:
-        iam = get_iam_client()
-        response = iam.list_user_tags(UserName=username)
-        for tag in response.get("Tags", []):
-            if tag["Key"] == exemption_tag and tag["Value"].lower() == "true":
-                return True
+        response = get_iam_client().list_user_tags(UserName=username)
     except ClientError:
-        pass
-    return False
+        logger.exception("Unable to read user tags for %s", username)
+        return False
+    return any(
+        tag["Key"] == exemption_tag and tag["Value"].lower() == "true"
+        for tag in response.get("Tags", [])
+    )
 
 
-def get_access_key_id(username, key_index):
-    """Get access key ID for a user"""
+def get_access_key_id(username: str, key_index: int) -> str | None:
     try:
-        iam = get_iam_client()
-        response = iam.list_access_keys(UserName=username)
-        keys = response.get("AccessKeyMetadata", [])
-        if key_index < len(keys):
-            return keys[key_index]["AccessKeyId"]
-    except ClientError as e:
-        logger.error(f"Error getting access key for {username}: {e}")
+        response = get_iam_client().list_access_keys(UserName=username)
+    except ClientError:
+        logger.exception("Unable to list access keys for %s", username)
+        return None
+    keys = sorted(
+        response.get("AccessKeyMetadata", []),
+        key=lambda entry: entry.get("CreateDate", datetime.now(UTC)),
+    )
+    if key_index < len(keys):
+        return keys[key_index]["AccessKeyId"]
     return None
 
 
-def process_key(username, key_id, last_rotated, notifications, metrics):
-    """Process a single access key - create new key and initiate rotation"""
+def process_key(
+    username: str,
+    key_id: str | None,
+    last_rotated: str,
+    notifications: list[dict[str, Any]],
+    metrics: dict[str, int],
+    config=None,
+) -> None:
+    """Process a single access key against the configured thresholds."""
     if not key_id:
         return
-
-    config = get_runtime_config()
+    runtime_config = config or load_runtime_config()
     metrics["total_keys"] += 1
-
-    # Calculate key age
-    key_date = parser.parse(last_rotated)
-    key_age = (datetime.now() - key_date.replace(tzinfo=None)).days
-
-    logger.info(f"Processing key {key_id} for user {username}, age: {key_age} days")
-
-    # Get user email
+    key_age = (utc_now() - parse_iso8601(last_rotated)).days
     email = get_user_email(username)
     if not email:
-        logger.warning(f"No email found for user {username}")
+        logger.warning("Skipping %s because no email tag was found", username)
         return
 
-    # Check thresholds and take action
-    if key_age >= config["disable_threshold"]:
+    if key_age >= runtime_config.disable_threshold:
         metrics["expired_keys"] += 1
-        if can_auto_rotate():
-            new_key_data = create_and_store_new_key(username, key_id, email)
-            if new_key_data:
-                notifications.append(
-                    build_notification(
-                        username,
-                        email,
-                        key_id,
-                        key_age,
-                        "rotated",
-                        "critical",
-                        new_key_data,
-                    )
-                )
-        else:
-            if config["auto_disable"]:
-                disable_key(username, key_id)
-                notifications.append(
-                    build_notification(
-                        username, email, key_id, key_age, "disabled", "critical"
-                    )
-                )
-            else:
-                notifications.append(
-                    build_notification(
-                        username, email, key_id, key_age, "expired", "critical"
-                    )
-                )
-
-    elif key_age >= config["urgent_threshold"]:
+        action, severity = "expired", "critical"
+    elif key_age >= runtime_config.urgent_threshold:
         metrics["urgent_keys"] += 1
-        if can_auto_rotate():
-            new_key_data = create_and_store_new_key(username, key_id, email)
-            if new_key_data:
-                notifications.append(
-                    build_notification(
-                        username,
-                        email,
-                        key_id,
-                        key_age,
-                        "rotated",
-                        "high",
-                        new_key_data,
-                    )
-                )
-        else:
-            notifications.append(
-                build_notification(username, email, key_id, key_age, "urgent", "high")
-            )
-
-    elif key_age >= config["warning_threshold"]:
+        action, severity = "urgent", "high"
+    elif key_age >= runtime_config.warning_threshold:
         metrics["warning_keys"] += 1
-        if can_auto_rotate():
-            new_key_data = create_and_store_new_key(username, key_id, email)
-            if new_key_data:
-                notifications.append(
-                    build_notification(
-                        username,
-                        email,
-                        key_id,
-                        key_age,
-                        "rotated",
-                        "medium",
-                        new_key_data,
-                    )
-                )
-        else:
+        action, severity = "warning", "medium"
+    else:
+        return
+
+    if runtime_config.auto_rotation_enabled:
+        new_key_data = create_and_store_new_key(username, key_id, email, runtime_config)
+        if new_key_data:
             notifications.append(
                 build_notification(
-                    username, email, key_id, key_age, "warning", "medium"
+                    username,
+                    email,
+                    key_id,
+                    key_age,
+                    "rotated",
+                    severity,
+                    new_key_data,
                 )
             )
+        return
+
+    if action == "expired" and runtime_config.auto_disable:
+        disable_key(username, key_id)
+        metrics["disabled_keys"] += 1
+        action = "disabled"
+    notifications.append(
+        build_notification(username, email, key_id, key_age, action, severity)
+    )
 
 
-def get_user_email(username):
-    """Get user's email from tags"""
+def get_user_email(username: str) -> str | None:
     try:
-        iam = get_iam_client()
-        response = iam.list_user_tags(UserName=username)
-        for tag in response.get("Tags", []):
-            if tag["Key"] == "email":
-                return tag["Value"]
-    except ClientError as e:
-        logger.error(f"Error getting email for {username}: {e}")
+        response = get_iam_client().list_user_tags(UserName=username)
+    except ClientError:
+        logger.exception("Unable to load email tag for %s", username)
+        return None
+    for tag in response.get("Tags", []):
+        if tag["Key"] == "email":
+            return tag["Value"]
     return None
 
 
-def create_and_store_new_key(username, old_key_id, email):
-    """Create new access key, store in S3, generate pre-signed URL, track in DynamoDB"""
-    config = get_runtime_config()
+def create_and_store_new_key(username: str, old_key_id: str, email: str, config=None):
+    """Create an idempotent rotation record and return notification data."""
+    runtime_config = config or load_runtime_config(require_rotation_store=True)
+    table = get_dynamodb_resource().Table(runtime_config.dynamodb_table)
+    existing = table.get_item(Key=rotation_item_key(username, old_key_id)).get("Item")
+    if existing and existing.get("status") in ACTIVE_ROTATION_STATUSES:
+        logger.info("Skipping duplicate rotation for %s/%s", username, old_key_id)
+        return None
+
+    iam = get_iam_client()
+    s3 = get_s3_client()
+    created_key_id = None
+    s3_key = credential_s3_key(username, old_key_id)
+
     try:
-        iam = get_iam_client()
-        
-        # Create new access key
         response = iam.create_access_key(UserName=username)
         new_key = response["AccessKey"]
-        new_key_id = new_key["AccessKeyId"]
-        secret_key = new_key["SecretAccessKey"]
-        
-        logger.info(f"Created new access key {new_key_id} for user {username}")
-        
-        # Prepare credentials JSON
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        created_key_id = new_key["AccessKeyId"]
+        rotation_started_at = utc_now()
+        old_key_deletion_date = int(
+            rotation_started_at.timestamp()
+            + (runtime_config.old_key_retention_days * 86400)
+        )
         credentials = {
-                "AccessKeyId": new_key_id,
-                "SecretAccessKey": secret_key,
-                "Username": username,
-                "CreatedAt": timestamp,
-                "OldKeyId": old_key_id,
-                "Instructions": [
-                    "Download this file immediately - it will be deleted after download",
-                    "Update your applications with the new credentials",
-                    f"Your old key ({old_key_id}) will be automatically deleted after "
-                    f"{config['old_key_retention_days']} days",
-                ],
-            }
-        
-        # Store in S3
-        s3 = get_s3_client()
-        s3_key = f"credentials/{username}/{timestamp}-credentials.json"
-        s3.put_object(
-            Bucket=config["s3_bucket"],
-            Key=s3_key,
-            Body=json.dumps(credentials, indent=2, default=str),
-            ServerSideEncryption="AES256",
-            ContentType="application/json"
-        )
-        
-        logger.info(f"Stored credentials in S3: {s3_key}")
-        
-        # Generate pre-signed URL (7-day expiration)
-        download_url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": config["s3_bucket"], "Key": s3_key},
-            ExpiresIn=604800  # 7 days in seconds
-        )
-        
-        # Calculate URL expiration time
-        url_expires = (datetime.now().timestamp() + 604800)
-        url_expires_str = datetime.fromtimestamp(url_expires).strftime("%Y-%m-%d %H:%M:%S UTC")
-        
-        # Track in DynamoDB
-        dynamodb = get_dynamodb_resource()
-        table = dynamodb.Table(config["dynamodb_table"])
-        
-        rotation_timestamp = datetime.now().isoformat()
-        
-        table.put_item(
-            Item={
-                "PK": f"USER#{username}",
-                "SK": f"ROTATION#{rotation_timestamp}",
-                "username": username,
-                "email": email,
-                "old_key_id": old_key_id,
-                "new_key_id": new_key_id,
-                "s3_key": s3_key,
-                "created_at": timestamp,
-                "rotation_initiated": rotation_timestamp,
-                "download_url": download_url,
-                "url_expires_at": int(url_expires),
-                "current_url_expires": rotation_timestamp,
-                "old_key_deletion_date": int(
-                    (
-                        datetime.now().timestamp()
-                        + (config["old_key_retention_days"] * 86400)
-                    )
-                ),
-                "downloaded": False,
-                "download_timestamp": None,
-                "download_ip": None,
-                "email_sent_count": 1,
-                "old_key_deleted": False,
-                "status": "pending_download",
-                "TTL": int((datetime.now().timestamp() + (90 * 86400)))
-            }
-        )
-        
-        logger.info(f"Tracked rotation in DynamoDB for {username}")
-        
-        return {
-            "download_url": download_url,
-            "url_expires": url_expires_str,
-            "new_key_id": new_key_id
+            "AccessKeyId": created_key_id,
+            "SecretAccessKey": new_key["SecretAccessKey"],
+            "Username": username,
+            "CreatedAt": isoformat(rotation_started_at),
+            "OldKeyId": old_key_id,
         }
-        
-    except ClientError as e:
-        logger.error(f"Error creating new key for {username}: {e}")
+        s3.put_object(
+            Bucket=runtime_config.s3_bucket,
+            Key=s3_key,
+            Body=json.dumps(credentials, indent=2).encode("utf-8"),
+            ServerSideEncryption="AES256",
+            ContentType="application/json",
+        )
+
+        record = build_rotation_record(
+            username=username,
+            email=email,
+            old_key_id=old_key_id,
+            new_key_id=created_key_id,
+            s3_key=s3_key,
+            rotation_started_at=rotation_started_at,
+            config=runtime_config,
+        )
+        table.put_item(
+            Item=record,
+            ConditionExpression="attribute_not_exists(PK) AND attribute_not_exists(SK)",
+        )
+
+        url_expires_at = int(
+            rotation_started_at.timestamp() + PRESIGNED_URL_TTL_SECONDS
+        )
+        return {
+            "download_url": s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": runtime_config.s3_bucket, "Key": s3_key},
+                ExpiresIn=PRESIGNED_URL_TTL_SECONDS,
+            ),
+            "url_expires": datetime.fromtimestamp(url_expires_at, tz=UTC).strftime(
+                "%Y-%m-%d %H:%M:%S UTC"
+            ),
+            "new_key_id": created_key_id,
+            "old_key_deletion_date": old_key_deletion_date,
+        }
+    except ClientError as exc:
+        cleanup_failed_rotation(
+            username, created_key_id, runtime_config.s3_bucket, s3_key
+        )
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            logger.info(
+                "Another invocation already created the rotation for %s/%s",
+                username,
+                old_key_id,
+            )
+            return None
+        logger.exception("Failed to create rotation for %s", username)
         return None
 
 
-def send_notification(notification):
-    """Send email notification with new access key download link"""
-    username = notification["username"]
-    email = notification["email"]
-    old_key_id = notification.get("old_key_id") or notification.get("key_id", "unknown")
-    age = notification["age"]
-    action = notification["action"]
-    config = get_runtime_config()
+def cleanup_failed_rotation(
+    username: str, created_key_id: str | None, bucket: str | None, s3_key: str
+) -> None:
+    """Delete partially created artifacts after a failed rotation attempt."""
+    if created_key_id:
+        try:
+            get_iam_client().delete_access_key(
+                UserName=username, AccessKeyId=created_key_id
+            )
+        except ClientError:
+            logger.exception(
+                "Failed to roll back new access key %s for %s", created_key_id, username
+            )
+    if bucket:
+        try:
+            get_s3_client().delete_object(Bucket=bucket, Key=s3_key)
+        except ClientError:
+            logger.exception("Failed to roll back S3 object %s", s3_key)
 
-    if action == "rotated":
-        presigned_url = notification["download_url"]
-        expiration_date = notification["url_expires"]
-        old_key_deletion_date = datetime.fromtimestamp(
-            datetime.now().timestamp() + (config["old_key_retention_days"] * 86400)
-        ).strftime("%B %d, %Y")
-        subject = "[AWS-IAM-CREDS] Day 0 - Action Required: Download Your New Access Key"
-        html_body = f"""<!DOCTYPE html>
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-  
-  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    
-    <h2 style="color: #232f3e;">AWS Access Key Rotation Required</h2>
-    
-    <p>Hello <strong>{username}</strong>,</p>
-    
-    <p>Your AWS access key has been rotated for security compliance. New credentials are now available for download.</p>
-    
-    <div style="background-color: #fff3cd; border: 2px solid #ff9900; border-radius: 4px; padding: 15px; margin: 20px 0;">
-      <div style="display: flex; align-items: center;">
-        <span style="font-size: 24px; margin-right: 10px;">⚠️</span>
-        <div>
-          <strong style="color: #cc0000; font-size: 16px;">IMPORTANT: ONE-TIME DOWNLOAD ONLY</strong>
-          <p style="margin: 5px 0 0 0; color: #856404;">
-            This link can only be used <strong>ONCE</strong>. After clicking, the credentials file will be permanently deleted from our servers for security. 
-            <strong>Save the file immediately</strong> after download.
-          </p>
-        </div>
-      </div>
-    </div>
-    
-    <div style="background-color: #f8f9fa; border-left: 4px solid #232f3e; padding: 15px; margin: 20px 0;">
-      <p style="margin: 0;"><strong>Old Key ID:</strong> <code>{old_key_id}</code></p>
-      <p style="margin: 5px 0;"><strong>Key Age:</strong> {age} days</p>
-      <p style="margin: 5px 0;"><strong>Link Expires:</strong> {expiration_date}</p>
-    </div>
-    
-    <div style="text-align: center; margin: 30px 0;">
-      <a href="{presigned_url}" 
-         style="background-color: #ff9900; color: white; padding: 15px 30px; text-decoration: none; 
-                border-radius: 4px; font-size: 16px; font-weight: bold; display: inline-block;">
-        📥 Download New Credentials (One-Time Only)
-      </a>
-    </div>
-    
-    <div style="background-color: #e7f3ff; border-left: 4px solid #0073bb; padding: 15px; margin: 20px 0;">
-      <h3 style="margin-top: 0; color: #0073bb;">📋 Next Steps:</h3>
-      <ol style="margin: 10px 0; padding-left: 20px;">
-        <li><strong>Click the download button above ONLY when ready</strong></li>
-        <li>Save the JSON file to a secure location immediately</li>
-        <li>Update your applications with the new credentials</li>
-        <li>Verify your applications are working with the new key</li>
-        <li>Your old key (<code>{old_key_id}</code>) will be deleted on <strong>{old_key_deletion_date}</strong></li>
-      </ol>
-    </div>
-    
-  <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
-      <p style="font-size: 14px; color: #666;">
-        <strong>Lost the credentials?</strong> Contact your security team immediately at 
-        <a href="mailto:cloud-security@mvwc.com">cloud-security@mvwc.com</a> for assistance.
-      </p>
-      <p style="font-size: 12px; color: #999;">
-        This is an automated message from AWS IAM Key Rotation System. Do not reply to this email.
-      </p>
-    </div>
-    
-  </div>
-  
-	</body>
-	</html>"""
-    else:
-        subject_map = {
-            "warning": "[AWS-IAM-CREDS] WARNING - Access Key Rotation Required Soon",
-            "urgent": "[AWS-IAM-CREDS] CRITICAL - Access Key Rotation Required Immediately",
-            "expired": "[AWS-IAM-CREDS] CRITICAL - Access Key Rotation Overdue",
-            "disabled": "[AWS-IAM-CREDS] CRITICAL - Access Key Disabled",
-        }
-        subject = subject_map.get(action, "[AWS-IAM-CREDS] Access Key Rotation Notice")
-        title = "Access Key Rotation Required"
-        if action == "disabled":
-            title = "Access Key Disabled"
-        elif action in ("urgent", "expired"):
-            title = "Immediate Action Required"
-        html_body = f"""<!DOCTYPE html>
-<html>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    <h2 style="color: #232f3e;">{title}</h2>
-    <p>Hello <strong>{username}</strong>,</p>
-    <p>Your AWS access key <code>{old_key_id}</code> is {age} days old and requires action.</p>
-    <div style="background-color: #f8f9fa; border-left: 4px solid #232f3e; padding: 15px; margin: 20px 0;">
-      <p style="margin: 0;"><strong>Current Status:</strong> {action.upper()}</p>
-      <p style="margin: 5px 0;"><strong>Key Age:</strong> {age} days</p>
-    </div>
-  </div>
-</body>
-</html>"""
 
+def send_notification(notification: dict[str, Any]) -> None:
+    """Send an SES notification for an enforcement event."""
+    config = load_runtime_config()
+    subject, html_body = render_enforcement_email(notification, config)
     try:
-        ses = get_ses_client()
-        ses.send_email(
-            Source=config["sender_email"],
-            Destination={"ToAddresses": [email]},
+        get_ses_client().send_email(
+            Source=config.sender_email,
+            Destination={"ToAddresses": [notification["email"]]},
             Message={
                 "Subject": {"Data": subject},
                 "Body": {"Html": {"Data": html_body}},
             },
         )
-        logger.info(f"Sent rotation notification to {username} ({email})")
-    except ClientError as e:
-        logger.error(f"Error sending email to {username}: {e}")
+    except ClientError:
+        logger.exception("Failed to send notification to %s", notification["email"])
 
 
-def disable_key(username, key_id):
-    """Disable an IAM access key and log failures without raising."""
+def disable_key(username: str, key_id: str) -> None:
     try:
-        iam = get_iam_client()
-        iam.update_access_key(UserName=username, AccessKeyId=key_id, Status="Inactive")
-        logger.info(f"Disabled key {key_id} for user {username}")
-    except ClientError as e:
-        logger.error(f"Error disabling key {key_id} for {username}: {e}")
+        get_iam_client().update_access_key(
+            UserName=username, AccessKeyId=key_id, Status="Inactive"
+        )
+    except ClientError:
+        logger.exception("Failed to disable key %s for %s", key_id, username)
 
 
-def publish_metrics(metrics):
-    """Publish metrics to CloudWatch"""
-    namespace = "IAM/KeyRotation"
-
+def publish_metrics(metrics: dict[str, int]) -> None:
     try:
         cw = get_cloudwatch_client()
         for metric_name, value in metrics.items():
             cw.put_metric_data(
-                Namespace=namespace,
+                Namespace=ROTATION_NAMESPACE,
                 MetricData=[
                     {
                         "MetricName": metric_name,
                         "Value": value,
                         "Unit": "Count",
-                        "Timestamp": datetime.now(),
+                        "Timestamp": utc_now(),
                     }
                 ],
             )
-        logger.info("Published metrics to CloudWatch")
-    except ClientError as e:
-        logger.error(f"Error publishing metrics: {e}")
+    except ClientError:
+        logger.exception("Failed to publish CloudWatch metrics")

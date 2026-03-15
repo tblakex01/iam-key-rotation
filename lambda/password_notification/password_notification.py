@@ -9,24 +9,42 @@ from datetime import datetime
 from dateutil import parser
 import boto3
 
-iam_client = boto3.client("iam")
-ses_client = boto3.client("ses")
+iam_client = None
+ses_client = None
+
+
+def get_iam_client():
+    """Return a cached IAM client."""
+    global iam_client
+    if iam_client is None:
+        iam_client = boto3.client("iam")
+    return iam_client
+
+
+def get_ses_client():
+    """Return a cached SES client."""
+    global ses_client
+    if ses_client is None:
+        ses_client = boto3.client("ses")
+    return ses_client
 
 
 def lambda_handler(event, context):
     """Get IAM creds report, check for expiring passwords & notify users"""
-    iam_client.generate_credential_report()
+    iam = get_iam_client()
+    ses = get_ses_client()
+    iam.generate_credential_report()
 
     while True:
         # Wait before checking the report status again
         time.sleep(5)
 
         # Get the credential report generation status
-        response = iam_client.get_credential_report()
+        response = iam.get_credential_report()
         if "Content" in response:
             break
 
-    credential_report = iam_client.get_credential_report()
+    credential_report = iam.get_credential_report()
     credential_report_csv = credential_report["Content"].decode("utf-8")
 
     # Process the credential report
@@ -45,7 +63,7 @@ def lambda_handler(event, context):
 
             if days_since_password_change > 78:
                 # Retrieve user's email address from tags
-                response = iam_client.list_user_tags(UserName=username)
+                response = iam.list_user_tags(UserName=username)
                 if email := next(
                     (tag["Value"] for tag in response["Tags"] if tag["Key"] == "email"),
                     None,
@@ -72,7 +90,7 @@ def lambda_handler(event, context):
             </body>
             </html>
             """
-        ses_client.send_email(
+        ses.send_email(
             Source="cloud-admins@jennasrunbooks.com",
             Destination={"ToAddresses": [user["email"]]},
             Message={

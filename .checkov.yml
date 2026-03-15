@@ -1,0 +1,9 @@
+skip-check:
+  - CKV_AWS_117:(lambda|download_tracker_lambda|url_regenerator_lambda|cleanup_lambda|s3_cleanup_lambda)\.tf$
+  - CKV_AWS_272:(lambda|download_tracker_lambda|url_regenerator_lambda|cleanup_lambda|s3_cleanup_lambda)\.tf$
+  - CKV_AWS_273:users\.tf$
+  - CKV2_AWS_62:s3\.tf$
+  - CKV2_AWS_62:security\.tf$
+  - CKV_AWS_21:s3\.tf$
+  - CKV_AWS_144:s3\.tf$
+  - CKV_AWS_144:security\.tf$

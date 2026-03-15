@@ -4,10 +4,10 @@
 
 # DynamoDB table for tracking IAM key rotations
 resource "aws_dynamodb_table" "key_rotation_tracking" {
-  name           = "iam-key-rotation-tracking"
-  billing_mode   = "PAY_PER_REQUEST" # On-demand pricing
-  hash_key       = "PK"
-  range_key      = "SK"
+  name         = local.tracking_table_name
+  billing_mode = "PAY_PER_REQUEST" # On-demand pricing
+  hash_key     = "PK"
+  range_key    = "SK"
 
   # Primary key structure: PK = USER#username, SK = ROTATION#timestamp
   attribute {
@@ -31,9 +31,8 @@ resource "aws_dynamodb_table" "key_rotation_tracking" {
     type = "S"
   }
 
-  # GSI for querying by URL expiration date
   attribute {
-    name = "current_url_expires"
+    name = "s3_key"
     type = "S"
   }
 
@@ -45,10 +44,10 @@ resource "aws_dynamodb_table" "key_rotation_tracking" {
     projection_type = "ALL"
   }
 
-  # Global Secondary Index: Query by URL expiration
+  # Global Secondary Index: Query by exact credential object key
   global_secondary_index {
-    name            = "url-expiration-index"
-    hash_key        = "current_url_expires"
+    name            = "s3-key-index"
+    hash_key        = "s3_key"
     projection_type = "ALL"
   }
 
@@ -65,7 +64,8 @@ resource "aws_dynamodb_table" "key_rotation_tracking" {
 
   # Enable encryption at rest
   server_side_encryption {
-    enabled = true
+    enabled     = true
+    kms_key_arn = aws_kms_key.data.arn
   }
 
   tags = merge(
@@ -79,7 +79,7 @@ resource "aws_dynamodb_table" "key_rotation_tracking" {
 
 # CloudWatch alarm for tracking table throttling
 resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
-  alarm_name          = "iam-key-rotation-tracking-throttles"
+  alarm_name          = local.dynamodb_alarm_name
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "1"
   metric_name         = "UserErrors"
@@ -88,6 +88,7 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
   statistic           = "Sum"
   threshold           = "10"
   alarm_description   = "Alert when DynamoDB table is being throttled"
+  alarm_actions       = [var.alarm_sns_topic]
 
   dimensions = {
     TableName = aws_dynamodb_table.key_rotation_tracking.name

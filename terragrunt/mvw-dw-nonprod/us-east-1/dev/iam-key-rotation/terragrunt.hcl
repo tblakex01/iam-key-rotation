@@ -36,18 +36,22 @@ terraform {
   extra_arguments "source_paths" {
     commands = ["plan", "apply", "destroy"]
     env_vars = {
-      TF_VAR_lambda_source_dir             = "${get_repo_root()}/lambda/access_key_enforcement"
-      TF_VAR_download_tracker_source_dir   = "${get_repo_root()}/lambda/download_tracker"
-      TF_VAR_url_regenerator_source_dir    = "${get_repo_root()}/lambda/url_regenerator"
-      TF_VAR_cleanup_source_dir            = "${get_repo_root()}/lambda/cleanup"
-      TF_VAR_s3_cleanup_source_dir         = "${get_repo_root()}/lambda/s3_cleanup"
-      TF_VAR_scripts_path                  = "${get_repo_root()}/scripts"
+      TF_VAR_lambda_source_dir             = "${get_repo_root()}/lambda"
+      TF_VAR_download_tracker_source_dir   = "${get_repo_root()}/lambda"
+      TF_VAR_url_regenerator_source_dir    = "${get_repo_root()}/lambda"
+      TF_VAR_cleanup_source_dir            = "${get_repo_root()}/lambda"
+      TF_VAR_s3_cleanup_source_dir         = "${get_repo_root()}/lambda"
     }
   }
 }
 
 # Inputs that pass variables to Terraform module
 inputs = {
+  name_prefix      = local.service_name
+  environment_name = local.environment
+  account_id       = local.account_vars.locals.account_id
+  aws_region       = local.region
+
   # Common resource tags
   common_tags = local.config_vars.locals.common_tags
   
@@ -65,6 +69,6 @@ inputs = {
   new_key_retention_days = local.config_vars.locals.new_key_retention_days
   old_key_retention_days = local.config_vars.locals.old_key_retention_days
   
-  # Test Users Configuration (SAFE FOR TESTING)
-  user_info = local.config_vars.locals.user_info
+  # Explicit IAM users managed in this environment
+  managed_user_info = local.config_vars.locals.managed_user_info
 }

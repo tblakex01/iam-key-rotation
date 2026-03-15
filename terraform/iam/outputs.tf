@@ -39,7 +39,7 @@ output "non_compliant_users_alarm_name" {
 
 # IAM users outputs
 output "iam_users" {
-  description = "Map of created IAM users"
+  description = "Map of explicitly managed IAM users"
   value = {
     for name, user in aws_iam_user.this :
     name => {
@@ -61,28 +61,6 @@ output "configuration_summary" {
     sender_email      = var.sender_email
     schedule          = var.schedule_expression
   }
-}
-
-# Output access key information for testing
-output "test_user_access_keys" {
-  description = "Access key information for test users (for testing purposes only)"
-  value = {
-    for username, key in aws_iam_access_key.this : username => {
-      access_key_id = key.id
-      creation_date = key.create_date
-      # Note: secret is not output for security (stored in terraform state only)
-    }
-  }
-  sensitive = false
-}
-
-# Output access key secrets (marked sensitive so they don't show in logs)
-output "test_user_access_key_secrets" {
-  description = "Access key secrets for test users (sensitive - for testing only)"
-  value = {
-    for username, key in aws_iam_access_key.this : username => key.secret
-  }
-  sensitive = true
 }
 
 # S3 bucket outputs
@@ -107,6 +85,16 @@ output "tracking_table_arn" {
   value       = aws_dynamodb_table.key_rotation_tracking.arn
 }
 
+output "operations_dashboard_name" {
+  description = "CloudWatch dashboard for the key rotation system"
+  value       = aws_cloudwatch_dashboard.key_rotation.dashboard_name
+}
+
+output "lambda_failures_dlq_name" {
+  description = "SQS DLQ receiving failed asynchronous Lambda invocations"
+  value       = aws_sqs_queue.lambda_failures.name
+}
+
 # New Lambda function outputs
 output "download_tracker_function_arn" {
   description = "ARN of the download tracker Lambda function"
@@ -127,15 +115,17 @@ output "cleanup_function_arn" {
 output "key_rotation_system_summary" {
   description = "Complete summary of the automated key rotation system"
   value = {
-    enforcement_lambda      = aws_lambda_function.access_key_enforcement.function_name
-    download_tracker        = aws_lambda_function.download_tracker.function_name
-    url_regenerator         = aws_lambda_function.url_regenerator.function_name
-    cleanup_lambda          = aws_lambda_function.cleanup.function_name
-    s3_cleanup_lambda       = aws_lambda_function.s3_cleanup.function_name
-    credentials_bucket      = aws_s3_bucket.credentials.id
-    tracking_table          = aws_dynamodb_table.key_rotation_tracking.name
-    new_key_retention_days  = var.new_key_retention_days
-    old_key_retention_days  = var.old_key_retention_days
-    sender_email            = var.sender_email
+    resource_prefix        = local.resource_prefix
+    environment_name       = var.environment_name
+    enforcement_lambda     = aws_lambda_function.access_key_enforcement.function_name
+    download_tracker       = aws_lambda_function.download_tracker.function_name
+    url_regenerator        = aws_lambda_function.url_regenerator.function_name
+    cleanup_lambda         = aws_lambda_function.cleanup.function_name
+    s3_cleanup_lambda      = aws_lambda_function.s3_cleanup.function_name
+    credentials_bucket     = aws_s3_bucket.credentials.id
+    tracking_table         = aws_dynamodb_table.key_rotation_tracking.name
+    new_key_retention_days = var.new_key_retention_days
+    old_key_retention_days = var.old_key_retention_days
+    sender_email           = var.sender_email
   }
 }

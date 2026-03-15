@@ -3,7 +3,7 @@
 
 # IAM role for S3 cleanup Lambda
 resource "aws_iam_role" "s3_cleanup_exec" {
-  name = "iam-s3-cleanup-lambda-role"
+  name = "${local.s3_cleanup_name}-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -23,7 +23,7 @@ resource "aws_iam_role" "s3_cleanup_exec" {
 
 # IAM policy for S3 cleanup Lambda
 resource "aws_iam_policy" "s3_cleanup_policy" {
-  name        = "iam-s3-cleanup-lambda-policy"
+  name        = "${local.s3_cleanup_name}-policy"
   description = "Policy for S3 cleanup Lambda function"
 
   policy = jsonencode({
@@ -36,12 +36,14 @@ resource "aws_iam_policy" "s3_cleanup_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = [
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${local.s3_cleanup_name}",
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${local.s3_cleanup_name}:*"
+        ]
       },
       {
         Effect = "Allow"
         Action = [
-          "dynamodb:Scan",
           "dynamodb:Query",
           "dynamodb:UpdateItem"
         ]
@@ -56,7 +58,7 @@ resource "aws_iam_policy" "s3_cleanup_policy" {
           "s3:DeleteObject",
           "s3:HeadObject"
         ]
-        Resource = "arn:aws:s3:::iam-credentials-${data.aws_caller_identity.current.account_id}/*"
+        Resource = "${aws_s3_bucket.credentials.arn}/*"
       },
       {
         Effect = "Allow"
@@ -74,6 +76,37 @@ resource "aws_iam_policy" "s3_cleanup_policy" {
         Effect = "Allow"
         Action = [
           "cloudwatch:PutMetricData"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "IAM/KeyRotation"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey",
+          "kms:Encrypt",
+          "kms:GenerateDataKey*",
+          "kms:ReEncrypt*"
+        ]
+        Resource = aws_kms_key.data.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = aws_sqs_queue.lambda_failures.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "xray:PutTelemetryRecords",
+          "xray:PutTraceSegments"
         ]
         Resource = "*"
       }
@@ -96,15 +129,27 @@ data "archive_file" "s3_cleanup_lambda" {
 }
 
 # Lambda function
+#checkov:skip=CKV_AWS_117:These functions call AWS public APIs only; VPC placement would add NAT and ENI failure modes without reducing exposure.
+#checkov:skip=CKV_AWS_272:Deployment artifacts are built outside AWS Signer; enforcing code signing here would break unsigned CI deploys.
 resource "aws_lambda_function" "s3_cleanup" {
-  filename         = data.archive_file.s3_cleanup_lambda.output_path
-  function_name    = "iam-s3-credentials-cleanup"
-  role            = aws_iam_role.s3_cleanup_exec.arn
-  handler         = "s3_cleanup.lambda_handler"
-  source_code_hash = data.archive_file.s3_cleanup_lambda.output_base64sha256
-  runtime         = "python3.11"
-  timeout         = 300  # 5 minutes for processing
-  memory_size     = 512
+  filename                       = data.archive_file.s3_cleanup_lambda.output_path
+  function_name                  = local.s3_cleanup_name
+  role                           = aws_iam_role.s3_cleanup_exec.arn
+  handler                        = "s3_cleanup.s3_cleanup.lambda_handler"
+  source_code_hash               = data.archive_file.s3_cleanup_lambda.output_base64sha256
+  runtime                        = "python3.11"
+  timeout                        = 300
+  memory_size                    = 512
+  kms_key_arn                    = aws_kms_key.data.arn
+  reserved_concurrent_executions = local.lambda_reserved_concurrency.s3_cleanup
+
+  dead_letter_config {
+    target_arn = aws_sqs_queue.lambda_failures.arn
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -117,21 +162,27 @@ resource "aws_lambda_function" "s3_cleanup" {
   }
 
   tags = var.common_tags
+
+  depends_on = [
+    aws_iam_role_policy_attachment.s3_cleanup_policy_attachment,
+    aws_cloudwatch_log_group.s3_cleanup
+  ]
 }
 
 # CloudWatch log group
 resource "aws_cloudwatch_log_group" "s3_cleanup" {
-  name              = "/aws/lambda/${aws_lambda_function.s3_cleanup.function_name}"
-  retention_in_days = 30
+  name              = "/aws/lambda/${local.s3_cleanup_name}"
+  retention_in_days = local.log_retention_days
+  kms_key_id        = aws_kms_key.logs.arn
 
   tags = var.common_tags
 }
 
 # EventBridge rule to trigger daily at 4 AM UTC
 resource "aws_cloudwatch_event_rule" "s3_cleanup_schedule" {
-  name                = "iam-s3-cleanup-daily"
+  name                = local.s3_cleanup_rule_name
   description         = "Trigger S3 credentials cleanup for expired files"
-  schedule_expression = "cron(0 4 * * ? *)"  # 4 AM UTC daily
+  schedule_expression = "cron(0 4 * * ? *)" # 4 AM UTC daily
 
   tags = var.common_tags
 }
@@ -139,7 +190,7 @@ resource "aws_cloudwatch_event_rule" "s3_cleanup_schedule" {
 # EventBridge target
 resource "aws_cloudwatch_event_target" "s3_cleanup_target" {
   rule      = aws_cloudwatch_event_rule.s3_cleanup_schedule.name
-  target_id = "s3-cleanup-target"
+  target_id = "${local.s3_cleanup_name}-target"
   arn       = aws_lambda_function.s3_cleanup.arn
 }
 

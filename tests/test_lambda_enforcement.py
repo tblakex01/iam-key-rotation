@@ -14,12 +14,10 @@ from datetime import datetime, timedelta
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 
 # Add the lambda directory to the path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "lambda", "access_key_enforcement")
-)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 # Import after path modification  # noqa: E402
-import access_key_enforcement  # noqa: E402
+from access_key_enforcement import access_key_enforcement  # noqa: E402
 
 
 class TestLambdaHandler(unittest.TestCase):
@@ -31,13 +29,15 @@ class TestLambdaHandler(unittest.TestCase):
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "OLD_KEY_RETENTION_DAYS": "30",
             "AUTO_DISABLE": "false",
             "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.iam_client")
-    @patch("access_key_enforcement.ses_client")
-    @patch("access_key_enforcement.cloudwatch")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.ses_client")
+    @patch("access_key_enforcement.access_key_enforcement.cloudwatch")
     def test_lambda_handler_success(self, mock_cloudwatch, mock_ses, mock_iam):
         """Test successful Lambda execution"""
         # Mock credential report generation
@@ -91,12 +91,14 @@ class TestLambdaHandler(unittest.TestCase):
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "OLD_KEY_RETENTION_DAYS": "30",
             "AUTO_DISABLE": "false",
             "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.iam_client")
-    @patch("access_key_enforcement.time.sleep")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.time.sleep")
     def test_lambda_handler_credential_report_timeout(self, mock_sleep, mock_iam):
         """Test Lambda execution when credential report generation times out"""
         # Mock credential report generation
@@ -124,14 +126,18 @@ class TestLambdaHandler(unittest.TestCase):
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "OLD_KEY_RETENTION_DAYS": "30",
             "AUTO_DISABLE": "false",
             "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.iam_client")
-    @patch("access_key_enforcement.ses_client")
-    @patch("access_key_enforcement.cloudwatch")
-    @patch("access_key_enforcement.time.sleep")  # Mock sleep to speed up test
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.ses_client")
+    @patch("access_key_enforcement.access_key_enforcement.cloudwatch")
+    @patch(
+        "access_key_enforcement.access_key_enforcement.time.sleep"
+    )  # Mock sleep to speed up test
     def test_lambda_handler_credential_report_retry_success(
         self, mock_sleep, mock_cloudwatch, mock_ses, mock_iam
     ):
@@ -172,12 +178,14 @@ class TestLambdaHandler(unittest.TestCase):
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "OLD_KEY_RETENTION_DAYS": "30",
             "AUTO_DISABLE": "false",
             "SENDER_EMAIL": "test@example.com",
             "CREDENTIAL_REPORT_TIMEOUT": "10",  # Custom short timeout for testing
         },
     )
-    @patch("access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
     def test_lambda_handler_custom_timeout(self, mock_iam):
         """Test Lambda execution with custom credential report timeout"""
         # Mock credential report generation
@@ -203,7 +211,7 @@ class TestLambdaHandler(unittest.TestCase):
 class TestUserExemption(unittest.TestCase):
     """Test user exemption functionality"""
 
-    @patch("access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
     def test_is_user_exempt_true(self, mock_iam):
         """Test user exemption when user has exemption tag"""
         mock_iam.list_user_tags.return_value = {
@@ -216,7 +224,7 @@ class TestUserExemption(unittest.TestCase):
         result = access_key_enforcement.is_user_exempt("testuser")
         self.assertTrue(result)
 
-    @patch("access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
     def test_is_user_exempt_false(self, mock_iam):
         """Test user exemption when user has no exemption tag"""
         mock_iam.list_user_tags.return_value = {
@@ -226,7 +234,7 @@ class TestUserExemption(unittest.TestCase):
         result = access_key_enforcement.is_user_exempt("testuser")
         self.assertFalse(result)
 
-    @patch("access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
     def test_is_user_exempt_false_value(self, mock_iam):
         """Test user exemption when exemption tag is false"""
         mock_iam.list_user_tags.return_value = {
@@ -249,9 +257,12 @@ class TestAccessKeyProcessing(unittest.TestCase):
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "OLD_KEY_RETENTION_DAYS": "30",
+            "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.get_user_email")
+    @patch("access_key_enforcement.access_key_enforcement.get_user_email")
     def test_process_key_warning(self, mock_get_email):
         """Test key processing for warning threshold"""
         mock_get_email.return_value = "test@example.com"
@@ -287,9 +298,12 @@ class TestAccessKeyProcessing(unittest.TestCase):
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "OLD_KEY_RETENTION_DAYS": "30",
+            "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.get_user_email")
+    @patch("access_key_enforcement.access_key_enforcement.get_user_email")
     def test_process_key_urgent(self, mock_get_email):
         """Test key processing for urgent threshold"""
         mock_get_email.return_value = "test@example.com"
@@ -325,9 +339,12 @@ class TestAccessKeyProcessing(unittest.TestCase):
             "WARNING_THRESHOLD": "75",
             "URGENT_THRESHOLD": "85",
             "DISABLE_THRESHOLD": "90",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "OLD_KEY_RETENTION_DAYS": "30",
+            "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.get_user_email")
+    @patch("access_key_enforcement.access_key_enforcement.get_user_email")
     def test_process_key_expired(self, mock_get_email):
         """Test key processing for expired threshold"""
         mock_get_email.return_value = "test@example.com"
@@ -361,7 +378,7 @@ class TestAccessKeyProcessing(unittest.TestCase):
 class TestEmailRetrieval(unittest.TestCase):
     """Test user email retrieval from tags"""
 
-    @patch("access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
     def test_get_user_email_success(self, mock_iam):
         """Test successful email retrieval"""
         mock_iam.list_user_tags.return_value = {
@@ -374,7 +391,7 @@ class TestEmailRetrieval(unittest.TestCase):
         email = access_key_enforcement.get_user_email("testuser")
         self.assertEqual(email, "test@example.com")
 
-    @patch("access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
     def test_get_user_email_not_found(self, mock_iam):
         """Test email retrieval when no email tag exists"""
         mock_iam.list_user_tags.return_value = {
@@ -388,7 +405,7 @@ class TestEmailRetrieval(unittest.TestCase):
 class TestKeyDisabling(unittest.TestCase):
     """Test access key disabling functionality"""
 
-    @patch("access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
     def test_disable_key_success(self, mock_iam):
         """Test successful key disabling"""
         mock_iam.update_access_key.return_value = {}
@@ -401,7 +418,7 @@ class TestKeyDisabling(unittest.TestCase):
             UserName="testuser", AccessKeyId="AKIAEXAMPLE", Status="Inactive"
         )
 
-    @patch("access_key_enforcement.iam_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
     def test_disable_key_error(self, mock_iam):
         """Test key disabling with error"""
         from botocore.exceptions import ClientError
@@ -418,7 +435,8 @@ class TestKeyDisabling(unittest.TestCase):
 class TestNotificationSending(unittest.TestCase):
     """Test notification sending functionality"""
 
-    @patch("access_key_enforcement.ses_client")
+    @patch.dict(os.environ, {"SENDER_EMAIL": "test@example.com"})
+    @patch("access_key_enforcement.access_key_enforcement.ses_client")
     def test_send_notification_warning(self, mock_ses):
         """Test sending warning notification"""
         mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
@@ -440,9 +458,10 @@ class TestNotificationSending(unittest.TestCase):
         # Verify email content
         call_args = mock_ses.send_email.call_args
         self.assertIn("test@example.com", call_args[1]["Destination"]["ToAddresses"])
-        self.assertIn("WARNING", call_args[1]["Message"]["Subject"]["Data"])
+        self.assertIn("Warning", call_args[1]["Message"]["Subject"]["Data"])
 
-    @patch("access_key_enforcement.ses_client")
+    @patch.dict(os.environ, {"SENDER_EMAIL": "test@example.com"})
+    @patch("access_key_enforcement.access_key_enforcement.ses_client")
     def test_send_notification_disabled(self, mock_ses):
         """Test sending disabled notification"""
         mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
@@ -463,7 +482,7 @@ class TestNotificationSending(unittest.TestCase):
 
         # Verify email content
         call_args = mock_ses.send_email.call_args
-        self.assertIn("CRITICAL", call_args[1]["Message"]["Subject"]["Data"])
+        self.assertIn("Critical", call_args[1]["Message"]["Subject"]["Data"])
 
     @patch.dict(
         os.environ,
@@ -472,7 +491,7 @@ class TestNotificationSending(unittest.TestCase):
             "OLD_KEY_RETENTION_DAYS": "30",
         },
     )
-    @patch("access_key_enforcement.ses_client")
+    @patch("access_key_enforcement.access_key_enforcement.ses_client")
     def test_send_notification_rotated(self, mock_ses):
         """Test sending rotated notification with a one-time download link."""
         mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
@@ -486,12 +505,13 @@ class TestNotificationSending(unittest.TestCase):
             "severity": "critical",
             "download_url": "https://example.com/download",
             "url_expires": "2026-03-20 12:00:00 UTC",
+            "old_key_deletion_date": 1770000000,
         }
 
         access_key_enforcement.send_notification(notification)
 
         call_args = mock_ses.send_email.call_args
-        self.assertIn("Day 0", call_args[1]["Message"]["Subject"]["Data"])
+        self.assertIn("Action Required", call_args[1]["Message"]["Subject"]["Data"])
         self.assertIn(
             "https://example.com/download",
             call_args[1]["Message"]["Body"]["Html"]["Data"],
@@ -507,14 +527,14 @@ class TestAutomatedRotation(unittest.TestCase):
             "S3_BUCKET": "rotation-bucket",
             "DYNAMODB_TABLE": "rotation-table",
             "OLD_KEY_RETENTION_DAYS": "30",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "SENDER_EMAIL": "test@example.com",
         },
     )
-    @patch("access_key_enforcement.dynamodb")
-    @patch("access_key_enforcement.s3_client")
-    @patch("access_key_enforcement.iam_client")
-    def test_create_and_store_new_key_success(
-        self, mock_iam, mock_s3, mock_dynamodb
-    ):
+    @patch("access_key_enforcement.access_key_enforcement.dynamodb")
+    @patch("access_key_enforcement.access_key_enforcement.s3_client")
+    @patch("access_key_enforcement.access_key_enforcement.iam_client")
+    def test_create_and_store_new_key_success(self, mock_iam, mock_s3, mock_dynamodb):
         """Test end-to-end key creation, S3 storage, and DynamoDB tracking."""
         mock_iam.create_access_key.return_value = {
             "AccessKey": {
@@ -524,6 +544,7 @@ class TestAutomatedRotation(unittest.TestCase):
         }
         mock_s3.generate_presigned_url.return_value = "https://example.com/download"
         mock_table = Mock()
+        mock_table.get_item.return_value = {}
         mock_dynamodb.Table.return_value = mock_table
 
         result = access_key_enforcement.create_and_store_new_key(
@@ -539,9 +560,20 @@ class TestAutomatedRotation(unittest.TestCase):
         self.assertEqual(stored_item["old_key_id"], "AKIAOLDKEY")
         self.assertEqual(stored_item["new_key_id"], "AKIANEWKEY123")
 
-    @patch.dict(os.environ, {"AUTO_DISABLE": "true"})
-    @patch("access_key_enforcement.disable_key")
-    @patch("access_key_enforcement.get_user_email")
+    @patch.dict(
+        os.environ,
+        {
+            "AUTO_DISABLE": "true",
+            "WARNING_THRESHOLD": "75",
+            "URGENT_THRESHOLD": "85",
+            "DISABLE_THRESHOLD": "90",
+            "NEW_KEY_RETENTION_DAYS": "45",
+            "OLD_KEY_RETENTION_DAYS": "30",
+            "SENDER_EMAIL": "test@example.com",
+        },
+    )
+    @patch("access_key_enforcement.access_key_enforcement.disable_key")
+    @patch("access_key_enforcement.access_key_enforcement.get_user_email")
     def test_process_key_auto_disable_without_rotation_config(
         self, mock_get_email, mock_disable_key
     ):
@@ -569,7 +601,7 @@ class TestAutomatedRotation(unittest.TestCase):
 class TestMetricsPublishing(unittest.TestCase):
     """Test CloudWatch metrics publishing"""
 
-    @patch("access_key_enforcement.cloudwatch")
+    @patch("access_key_enforcement.access_key_enforcement.cloudwatch")
     def test_publish_metrics_success(self, mock_cloudwatch):
         """Test successful metrics publishing"""
         mock_cloudwatch.put_metric_data.return_value = {}
