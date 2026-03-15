@@ -465,6 +465,106 @@ class TestNotificationSending(unittest.TestCase):
         call_args = mock_ses.send_email.call_args
         self.assertIn("CRITICAL", call_args[1]["Message"]["Subject"]["Data"])
 
+    @patch.dict(
+        os.environ,
+        {
+            "SENDER_EMAIL": "test@example.com",
+            "OLD_KEY_RETENTION_DAYS": "30",
+        },
+    )
+    @patch("access_key_enforcement.ses_client")
+    def test_send_notification_rotated(self, mock_ses):
+        """Test sending rotated notification with a one-time download link."""
+        mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
+
+        notification = {
+            "username": "testuser",
+            "email": "test@example.com",
+            "old_key_id": "AKIAEXAMPLE",
+            "age": 95,
+            "action": "rotated",
+            "severity": "critical",
+            "download_url": "https://example.com/download",
+            "url_expires": "2026-03-20 12:00:00 UTC",
+        }
+
+        access_key_enforcement.send_notification(notification)
+
+        call_args = mock_ses.send_email.call_args
+        self.assertIn("Day 0", call_args[1]["Message"]["Subject"]["Data"])
+        self.assertIn(
+            "https://example.com/download",
+            call_args[1]["Message"]["Body"]["Html"]["Data"],
+        )
+
+
+class TestAutomatedRotation(unittest.TestCase):
+    """Test automated rotation paths when infrastructure is configured."""
+
+    @patch.dict(
+        os.environ,
+        {
+            "S3_BUCKET": "rotation-bucket",
+            "DYNAMODB_TABLE": "rotation-table",
+            "OLD_KEY_RETENTION_DAYS": "30",
+        },
+    )
+    @patch("access_key_enforcement.dynamodb")
+    @patch("access_key_enforcement.s3_client")
+    @patch("access_key_enforcement.iam_client")
+    def test_create_and_store_new_key_success(
+        self, mock_iam, mock_s3, mock_dynamodb
+    ):
+        """Test end-to-end key creation, S3 storage, and DynamoDB tracking."""
+        mock_iam.create_access_key.return_value = {
+            "AccessKey": {
+                "AccessKeyId": "AKIANEWKEY123",
+                "SecretAccessKey": "secret-value",
+            }
+        }
+        mock_s3.generate_presigned_url.return_value = "https://example.com/download"
+        mock_table = Mock()
+        mock_dynamodb.Table.return_value = mock_table
+
+        result = access_key_enforcement.create_and_store_new_key(
+            "testuser", "AKIAOLDKEY", "test@example.com"
+        )
+
+        self.assertEqual(result["download_url"], "https://example.com/download")
+        self.assertEqual(result["new_key_id"], "AKIANEWKEY123")
+        mock_s3.put_object.assert_called_once()
+        mock_table.put_item.assert_called_once()
+        stored_item = mock_table.put_item.call_args.kwargs["Item"]
+        self.assertEqual(stored_item["username"], "testuser")
+        self.assertEqual(stored_item["old_key_id"], "AKIAOLDKEY")
+        self.assertEqual(stored_item["new_key_id"], "AKIANEWKEY123")
+
+    @patch.dict(os.environ, {"AUTO_DISABLE": "true"})
+    @patch("access_key_enforcement.disable_key")
+    @patch("access_key_enforcement.get_user_email")
+    def test_process_key_auto_disable_without_rotation_config(
+        self, mock_get_email, mock_disable_key
+    ):
+        """Test expired keys disable when automated rotation storage is not configured."""
+        mock_get_email.return_value = "test@example.com"
+
+        old_date = datetime.now() - timedelta(days=95)
+        notifications = []
+        metrics = {
+            "total_keys": 0,
+            "warning_keys": 0,
+            "urgent_keys": 0,
+            "disabled_keys": 0,
+            "expired_keys": 0,
+        }
+
+        access_key_enforcement.process_key(
+            "testuser", "AKIAEXAMPLE", old_date.isoformat(), notifications, metrics
+        )
+
+        mock_disable_key.assert_called_once_with("testuser", "AKIAEXAMPLE")
+        self.assertEqual(notifications[0]["action"], "disabled")
+
 
 class TestMetricsPublishing(unittest.TestCase):
     """Test CloudWatch metrics publishing"""

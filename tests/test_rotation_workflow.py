@@ -9,11 +9,15 @@ import boto3
 import json
 import time
 from datetime import datetime, timedelta
+import pytest
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
 console = Console()
+pytestmark = pytest.mark.skip(
+    reason="Operational workflow script; run manually against a configured AWS environment."
+)
 
 # Configuration
 REGION = "us-east-1"
@@ -21,21 +25,35 @@ PROFILE = "dw-nonprod"
 DYNAMODB_TABLE = "iam-key-rotation-tracking"
 TEST_USERNAME = "iam-test-user-dev-1"
 
-# Initialize AWS clients
-session = boto3.Session(profile_name=PROFILE, region_name=REGION)
-dynamodb = session.resource("dynamodb")
-lambda_client = session.client("lambda")
-iam_client = session.client("iam")
-s3_client = session.client("s3")
-table = dynamodb.Table(DYNAMODB_TABLE)
+# Lazily initialized AWS clients for manual runs.
+session = None
+dynamodb = None
+lambda_client = None
+iam_client = None
+s3_client = None
+table = None
 
 # Global config - loaded dynamically
 CONFIG = {}
 
 
+def ensure_clients():
+    """Initialize AWS clients only for manual workflow runs."""
+    global session, dynamodb, lambda_client, iam_client, s3_client, table
+    if session is not None:
+        return
+    session = boto3.Session(profile_name=PROFILE, region_name=REGION)
+    dynamodb = session.resource("dynamodb")
+    lambda_client = session.client("lambda")
+    iam_client = session.client("iam")
+    s3_client = session.client("s3")
+    table = dynamodb.Table(DYNAMODB_TABLE)
+
+
 def load_config():
     """Load retention configuration from deployed Lambda"""
     global CONFIG
+    ensure_clients()
     
     try:
         response = lambda_client.get_function_configuration(
@@ -66,6 +84,7 @@ def load_config():
 
 def get_test_record():
     """Get the most recent rotation record for test user"""
+    ensure_clients()
     response = table.query(
         KeyConditionExpression="PK = :pk",
         ExpressionAttributeValues={":pk": f"USER#{TEST_USERNAME}"},
@@ -104,7 +123,7 @@ def display_record(record, title="Current Record"):
     console.print(table_display)
 
 
-def test_reminder(day_number):
+def run_reminder_test(day_number):
     """Test URL regenerator for any 7-day reminder (dynamically calculated)"""
     console.print("\n")
     console.print(Panel.fit(f"🔄 Testing Day {day_number} Reminder (URL Regenerator)", style="bold yellow"))
@@ -161,7 +180,7 @@ def test_reminder(day_number):
     console.print("[yellow]Check your email for the reminder message![/yellow]")
 
 
-def test_old_key_warning():
+def run_old_key_warning_test():
     """Test day 23 old key deletion warning"""
     warning_day = CONFIG['OLD_KEY_RETENTION_DAYS'] - 7
     
@@ -211,7 +230,7 @@ def test_old_key_warning():
     console.print("[yellow]Check your email for the 7-day deletion warning![/yellow]")
 
 
-def test_old_key_deletion():
+def run_old_key_deletion_test():
     """Test day 30 old key deletion with conditional email"""
     deletion_day = CONFIG['OLD_KEY_RETENTION_DAYS']
     
@@ -292,7 +311,7 @@ def test_old_key_deletion():
     console.print("[yellow]Check your email - message depends on if you downloaded![/yellow]")
 
 
-def test_s3_cleanup():
+def run_s3_cleanup_test():
     """Test day 45 S3 credentials cleanup"""
     cleanup_day = CONFIG['NEW_KEY_RETENTION_DAYS']
     
@@ -398,36 +417,36 @@ def main():
         
         # Handle reminder day tests
         if 1 <= choice_num <= len(reminder_days):
-            test_reminder(reminder_days[choice_num - 1])
+            run_reminder_test(reminder_days[choice_num - 1])
         
         # Old key warning
         elif choice_num == len(reminder_days) + 1:
-            test_old_key_warning()
+            run_old_key_warning_test()
         
         # Old key deletion
         elif choice_num == len(reminder_days) + 2:
-            test_old_key_deletion()
+            run_old_key_deletion_test()
         
         # S3 cleanup
         elif choice_num == len(reminder_days) + 3:
-            test_s3_cleanup()
+            run_s3_cleanup_test()
         
         # Run all
         elif choice_num == len(reminder_days) + 4:
             for day in reminder_days:
-                test_reminder(day)
+                run_reminder_test(day)
                 console.print("\n" + "="*80 + "\n")
                 input("Press Enter to continue...")
             
-            test_old_key_warning()
+            run_old_key_warning_test()
             console.print("\n" + "="*80 + "\n")
             input("Press Enter to continue...")
             
-            test_old_key_deletion()
+            run_old_key_deletion_test()
             console.print("\n" + "="*80 + "\n")
             input("Press Enter to continue...")
             
-            test_s3_cleanup()
+            run_s3_cleanup_test()
         
         # Exit
         elif choice_num == len(reminder_days) + 5:

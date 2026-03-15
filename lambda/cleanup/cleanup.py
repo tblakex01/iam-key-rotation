@@ -206,9 +206,8 @@ def delete_old_key_and_notify(item):
         item: DynamoDB tracking record
     """
     username = item.get("username")
+    email = item.get("email")
     old_key_id = item.get("old_key_id")
-    downloaded = item.get("downloaded", False)
-    
     downloaded = item.get("downloaded", False)
     s3_key = item.get("s3_key")
     
@@ -251,10 +250,12 @@ def delete_old_key_and_notify(item):
         )
         
         logger.info(f"Updated tracking record for {username} to status: {new_status}")
-    
-    # Send conditional email based on download status
-    send_deletion_email(username, email, old_key_id, downloaded, s3_key)
-        
+
+        # Send conditional email after the state update succeeds.
+        if email:
+            send_deletion_email(username, email, old_key_id, downloaded, s3_key)
+        else:
+            logger.warning(f"No email found for {username}; skipping deletion email")
     except ClientError as e:
         logger.error(f"Error updating DynamoDB: {e}")
         raise

@@ -27,6 +27,24 @@ s3_client = None
 dynamodb = None
 
 
+def get_runtime_config():
+    """Load runtime configuration from environment variables."""
+    return {
+        "warning_threshold": int(os.environ.get("WARNING_THRESHOLD", "75")),
+        "urgent_threshold": int(os.environ.get("URGENT_THRESHOLD", "85")),
+        "disable_threshold": int(os.environ.get("DISABLE_THRESHOLD", "90")),
+        "auto_disable": os.environ.get("AUTO_DISABLE", "false").lower() == "true",
+        "sender_email": os.environ.get(
+            "SENDER_EMAIL", "cloud-admins@jennasrunbooks.com"
+        ),
+        "exemption_tag": os.environ.get("EXEMPTION_TAG", "key-rotation-exempt"),
+        "s3_bucket": os.environ.get("S3_BUCKET"),
+        "dynamodb_table": os.environ.get("DYNAMODB_TABLE"),
+        "new_key_retention_days": int(os.environ.get("NEW_KEY_RETENTION_DAYS", "45")),
+        "old_key_retention_days": int(os.environ.get("OLD_KEY_RETENTION_DAYS", "30")),
+    }
+
+
 def get_iam_client():
     """Return a boto3 IAM client, creating it if needed."""
     global iam_client
@@ -67,17 +85,28 @@ def get_dynamodb_resource():
     return dynamodb
 
 
-# Configuration from environment variables
-WARNING_THRESHOLD = int(os.environ.get("WARNING_THRESHOLD", "75"))
-URGENT_THRESHOLD = int(os.environ.get("URGENT_THRESHOLD", "85"))
-DISABLE_THRESHOLD = int(os.environ.get("DISABLE_THRESHOLD", "90"))
-AUTO_DISABLE = os.environ.get("AUTO_DISABLE", "false").lower() == "true"
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "cloud-admins@jennasrunbooks.com")
-EXEMPTION_TAG = os.environ.get("EXEMPTION_TAG", "key-rotation-exempt")
-S3_BUCKET = os.environ.get("S3_BUCKET")
-DYNAMODB_TABLE = os.environ.get("DYNAMODB_TABLE")
-NEW_KEY_RETENTION_DAYS = int(os.environ.get("NEW_KEY_RETENTION_DAYS", "45"))
-OLD_KEY_RETENTION_DAYS = int(os.environ.get("OLD_KEY_RETENTION_DAYS", "30"))
+def build_notification(username, email, key_id, age, action, severity, key_data=None):
+    """Build a notification payload for SES delivery."""
+    notification = {
+        "username": username,
+        "email": email,
+        "old_key_id": key_id,
+        "key_id": key_id,
+        "age": age,
+        "action": action,
+        "severity": severity,
+    }
+    if key_data:
+        notification["download_url"] = key_data["download_url"]
+        notification["url_expires"] = key_data["url_expires"]
+        notification["new_key_id"] = key_data["new_key_id"]
+    return notification
+
+
+def can_auto_rotate():
+    """Return whether the automated rotation path is fully configured."""
+    config = get_runtime_config()
+    return bool(config["s3_bucket"] and config["dynamodb_table"])
 
 
 def lambda_handler(event, context):  # noqa: ARG001
@@ -191,11 +220,12 @@ def lambda_handler(event, context):  # noqa: ARG001
 
 def is_user_exempt(username):
     """Check if user has exemption tag"""
+    exemption_tag = get_runtime_config()["exemption_tag"]
     try:
         iam = get_iam_client()
         response = iam.list_user_tags(UserName=username)
         for tag in response.get("Tags", []):
-            if tag["Key"] == EXEMPTION_TAG and tag["Value"].lower() == "true":
+            if tag["Key"] == exemption_tag and tag["Value"].lower() == "true":
                 return True
     except ClientError:
         pass
@@ -220,6 +250,7 @@ def process_key(username, key_id, last_rotated, notifications, metrics):
     if not key_id:
         return
 
+    config = get_runtime_config()
     metrics["total_keys"] += 1
 
     # Calculate key age
@@ -235,58 +266,79 @@ def process_key(username, key_id, last_rotated, notifications, metrics):
         return
 
     # Check thresholds and take action
-    if key_age >= DISABLE_THRESHOLD:
+    if key_age >= config["disable_threshold"]:
         metrics["expired_keys"] += 1
-        # Create new key and initiate automated rotation
-        new_key_data = create_and_store_new_key(username, key_id, email)
-        if new_key_data:
-            notifications.append(
-                {
-                    "username": username,
-                    "email": email,
-                    "old_key_id": key_id,
-                    "age": key_age,
-                    "action": "rotated",
-                    "severity": "critical",
-                    "download_url": new_key_data["download_url"],
-                    "url_expires": new_key_data["url_expires"],
-                }
-            )
+        if can_auto_rotate():
+            new_key_data = create_and_store_new_key(username, key_id, email)
+            if new_key_data:
+                notifications.append(
+                    build_notification(
+                        username,
+                        email,
+                        key_id,
+                        key_age,
+                        "rotated",
+                        "critical",
+                        new_key_data,
+                    )
+                )
+        else:
+            if config["auto_disable"]:
+                disable_key(username, key_id)
+                notifications.append(
+                    build_notification(
+                        username, email, key_id, key_age, "disabled", "critical"
+                    )
+                )
+            else:
+                notifications.append(
+                    build_notification(
+                        username, email, key_id, key_age, "expired", "critical"
+                    )
+                )
 
-    elif key_age >= URGENT_THRESHOLD:
+    elif key_age >= config["urgent_threshold"]:
         metrics["urgent_keys"] += 1
-        # Create new key for urgent rotations
-        new_key_data = create_and_store_new_key(username, key_id, email)
-        if new_key_data:
+        if can_auto_rotate():
+            new_key_data = create_and_store_new_key(username, key_id, email)
+            if new_key_data:
+                notifications.append(
+                    build_notification(
+                        username,
+                        email,
+                        key_id,
+                        key_age,
+                        "rotated",
+                        "high",
+                        new_key_data,
+                    )
+                )
+        else:
             notifications.append(
-                {
-                    "username": username,
-                    "email": email,
-                    "old_key_id": key_id,
-                    "age": key_age,
-                    "action": "rotated",
-                    "severity": "high",
-                    "download_url": new_key_data["download_url"],
-                    "url_expires": new_key_data["url_expires"],
-                }
+                build_notification(username, email, key_id, key_age, "urgent", "high")
             )
 
-    elif key_age >= WARNING_THRESHOLD:
+    elif key_age >= config["warning_threshold"]:
         metrics["warning_keys"] += 1
-        # Create new key for warning rotations
-        new_key_data = create_and_store_new_key(username, key_id, email)
-        if new_key_data:
+        if can_auto_rotate():
+            new_key_data = create_and_store_new_key(username, key_id, email)
+            if new_key_data:
+                notifications.append(
+                    build_notification(
+                        username,
+                        email,
+                        key_id,
+                        key_age,
+                        "rotated",
+                        "medium",
+                        new_key_data,
+                    )
+                )
+        else:
             notifications.append(
-                {
-                    "username": username,
-                    "email": email,
-                    "old_key_id": key_id,
-                    "age": key_age,
-                    "action": "rotated",
-                    "severity": "medium",
-                    "download_url": new_key_data["download_url"],
-                    "url_expires": new_key_data["url_expires"],
-                }
+                build_notification(
+                    username, email, key_id, key_age, "warning", "medium"
+                )
             )
 
 
@@ -305,6 +357,7 @@ def get_user_email(username):
 
 def create_and_store_new_key(username, old_key_id, email):
     """Create new access key, store in S3, generate pre-signed URL, track in DynamoDB"""
+    config = get_runtime_config()
     try:
         iam = get_iam_client()
         
@@ -319,25 +372,26 @@ def create_and_store_new_key(username, old_key_id, email):
         # Prepare credentials JSON
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         credentials = {
-            "AccessKeyId": new_key_id,
-            "SecretAccessKey": secret_key,
-            "Username": username,
-            "CreatedAt": timestamp,
-            "OldKeyId": old_key_id,
-            "Instructions": [
-                "Download this file immediately - it will be deleted after download",
-                "Update your applications with the new credentials",
-                f"Your old key ({old_key_id}) will be automatically deleted after {OLD_KEY_RETENTION_DAYS} days"
-            ]
-        }
+                "AccessKeyId": new_key_id,
+                "SecretAccessKey": secret_key,
+                "Username": username,
+                "CreatedAt": timestamp,
+                "OldKeyId": old_key_id,
+                "Instructions": [
+                    "Download this file immediately - it will be deleted after download",
+                    "Update your applications with the new credentials",
+                    f"Your old key ({old_key_id}) will be automatically deleted after "
+                    f"{config['old_key_retention_days']} days",
+                ],
+            }
         
         # Store in S3
         s3 = get_s3_client()
         s3_key = f"credentials/{username}/{timestamp}-credentials.json"
         s3.put_object(
-            Bucket=S3_BUCKET,
+            Bucket=config["s3_bucket"],
             Key=s3_key,
-            Body=json.dumps(credentials, indent=2),
+            Body=json.dumps(credentials, indent=2, default=str),
             ServerSideEncryption="AES256",
             ContentType="application/json"
         )
@@ -347,7 +401,7 @@ def create_and_store_new_key(username, old_key_id, email):
         # Generate pre-signed URL (7-day expiration)
         download_url = s3.generate_presigned_url(
             "get_object",
-            Params={"Bucket": S3_BUCKET, "Key": s3_key},
+            Params={"Bucket": config["s3_bucket"], "Key": s3_key},
             ExpiresIn=604800  # 7 days in seconds
         )
         
@@ -357,7 +411,7 @@ def create_and_store_new_key(username, old_key_id, email):
         
         # Track in DynamoDB
         dynamodb = get_dynamodb_resource()
-        table = dynamodb.Table(DYNAMODB_TABLE)
+        table = dynamodb.Table(config["dynamodb_table"])
         
         rotation_timestamp = datetime.now().isoformat()
         
@@ -375,7 +429,12 @@ def create_and_store_new_key(username, old_key_id, email):
                 "download_url": download_url,
                 "url_expires_at": int(url_expires),
                 "current_url_expires": rotation_timestamp,
-                "old_key_deletion_date": int((datetime.now().timestamp() + (OLD_KEY_RETENTION_DAYS * 86400))),
+                "old_key_deletion_date": int(
+                    (
+                        datetime.now().timestamp()
+                        + (config["old_key_retention_days"] * 86400)
+                    )
+                ),
                 "downloaded": False,
                 "download_timestamp": None,
                 "download_ip": None,
@@ -403,19 +462,19 @@ def send_notification(notification):
     """Send email notification with new access key download link"""
     username = notification["username"]
     email = notification["email"]
-    old_key_id = notification["old_key_id"]
+    old_key_id = notification.get("old_key_id") or notification.get("key_id", "unknown")
     age = notification["age"]
-    presigned_url = notification["download_url"]
-    expiration_date = notification["url_expires"]
-    
-    # Calculate old key deletion date
-    old_key_deletion_date = datetime.fromtimestamp(
-        datetime.now().timestamp() + (OLD_KEY_RETENTION_DAYS * 86400)
-    ).strftime("%B %d, %Y")
+    action = notification["action"]
+    config = get_runtime_config()
 
-    subject = "[AWS-IAM-CREDS] Day 0 - Action Required: Download Your New Access Key"
-
-    html_body = f"""<!DOCTYPE html>
+    if action == "rotated":
+        presigned_url = notification["download_url"]
+        expiration_date = notification["url_expires"]
+        old_key_deletion_date = datetime.fromtimestamp(
+            datetime.now().timestamp() + (config["old_key_retention_days"] * 86400)
+        ).strftime("%B %d, %Y")
+        subject = "[AWS-IAM-CREDS] Day 0 - Action Required: Download Your New Access Key"
+        html_body = f"""<!DOCTYPE html>
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
   
@@ -465,7 +524,7 @@ def send_notification(notification):
       </ol>
     </div>
     
-    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+  <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
       <p style="font-size: 14px; color: #666;">
         <strong>Lost the credentials?</strong> Contact your security team immediately at 
         <a href="mailto:cloud-security@mvwc.com">cloud-security@mvwc.com</a> for assistance.
@@ -477,13 +536,40 @@ def send_notification(notification):
     
   </div>
   
+	</body>
+	</html>"""
+    else:
+        subject_map = {
+            "warning": "[AWS-IAM-CREDS] WARNING - Access Key Rotation Required Soon",
+            "urgent": "[AWS-IAM-CREDS] CRITICAL - Access Key Rotation Required Immediately",
+            "expired": "[AWS-IAM-CREDS] CRITICAL - Access Key Rotation Overdue",
+            "disabled": "[AWS-IAM-CREDS] CRITICAL - Access Key Disabled",
+        }
+        subject = subject_map.get(action, "[AWS-IAM-CREDS] Access Key Rotation Notice")
+        title = "Access Key Rotation Required"
+        if action == "disabled":
+            title = "Access Key Disabled"
+        elif action in ("urgent", "expired"):
+            title = "Immediate Action Required"
+        html_body = f"""<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #232f3e;">{title}</h2>
+    <p>Hello <strong>{username}</strong>,</p>
+    <p>Your AWS access key <code>{old_key_id}</code> is {age} days old and requires action.</p>
+    <div style="background-color: #f8f9fa; border-left: 4px solid #232f3e; padding: 15px; margin: 20px 0;">
+      <p style="margin: 0;"><strong>Current Status:</strong> {action.upper()}</p>
+      <p style="margin: 5px 0;"><strong>Key Age:</strong> {age} days</p>
+    </div>
+  </div>
 </body>
 </html>"""
 
     try:
         ses = get_ses_client()
         ses.send_email(
-            Source=SENDER_EMAIL,
+            Source=config["sender_email"],
             Destination={"ToAddresses": [email]},
             Message={
                 "Subject": {"Data": subject},
@@ -493,6 +579,16 @@ def send_notification(notification):
         logger.info(f"Sent rotation notification to {username} ({email})")
     except ClientError as e:
         logger.error(f"Error sending email to {username}: {e}")
+
+
+def disable_key(username, key_id):
+    """Disable an IAM access key and log failures without raising."""
+    try:
+        iam = get_iam_client()
+        iam.update_access_key(UserName=username, AccessKeyId=key_id, Status="Inactive")
+        logger.info(f"Disabled key {key_id} for user {username}")
+    except ClientError as e:
+        logger.error(f"Error disabling key {key_id} for {username}: {e}")
 
 
 def publish_metrics(metrics):
