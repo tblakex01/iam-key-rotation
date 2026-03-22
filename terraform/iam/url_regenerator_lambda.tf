@@ -4,7 +4,7 @@
 
 # IAM role for URL regenerator Lambda
 resource "aws_iam_role" "url_regenerator_exec" {
-  name = "iam-key-url-regenerator-lambda-role"
+  name = "${local.url_regenerator_name}-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -23,8 +23,10 @@ resource "aws_iam_role" "url_regenerator_exec" {
 }
 
 # IAM policy for URL regenerator Lambda
+#checkov:skip=CKV_AWS_355:SES delivery is constrained by sender identity and X-Ray telemetry APIs do not support resource scoping.
+#checkov:skip=CKV_AWS_290:X-Ray telemetry APIs require wildcard resources; SES delivery is constrained by sender identity.
 resource "aws_iam_role_policy" "url_regenerator_policy" {
-  name = "url-regenerator-lambda-policy"
+  name = "${local.url_regenerator_name}-policy"
   role = aws_iam_role.url_regenerator_exec.id
 
   policy = jsonencode({
@@ -37,7 +39,10 @@ resource "aws_iam_role_policy" "url_regenerator_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = [
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${local.url_regenerator_name}",
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${local.url_regenerator_name}:*"
+        ]
       },
       {
         Effect = "Allow"
@@ -50,7 +55,6 @@ resource "aws_iam_role_policy" "url_regenerator_policy" {
       {
         Effect = "Allow"
         Action = [
-          "dynamodb:Scan",
           "dynamodb:Query",
           "dynamodb:UpdateItem"
         ]
@@ -62,15 +66,38 @@ resource "aws_iam_role_policy" "url_regenerator_policy" {
       {
         Effect = "Allow"
         Action = [
-          "ses:SendEmail",
-          "ses:SendRawEmail"
+          "ses:SendEmail"
         ]
         Resource = "*"
+        Condition = {
+          StringEquals = {
+            "ses:FromAddress" = var.sender_email
+          }
+        }
       },
       {
         Effect = "Allow"
         Action = [
-          "iam:GetUser"
+          "kms:Decrypt",
+          "kms:DescribeKey",
+          "kms:Encrypt",
+          "kms:GenerateDataKey*",
+          "kms:ReEncrypt*"
+        ]
+        Resource = aws_kms_key.data.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = aws_sqs_queue.lambda_failures.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "xray:PutTelemetryRecords",
+          "xray:PutTraceSegments"
         ]
         Resource = "*"
       }
@@ -87,15 +114,27 @@ data "archive_file" "url_regenerator_lambda" {
 }
 
 # Lambda function
+#checkov:skip=CKV_AWS_117:These functions call AWS public APIs only; VPC placement would add NAT and ENI failure modes without reducing exposure.
+#checkov:skip=CKV_AWS_272:Deployment artifacts are built outside AWS Signer; enforcing code signing here would break unsigned CI deploys.
 resource "aws_lambda_function" "url_regenerator" {
-  filename         = data.archive_file.url_regenerator_lambda.output_path
-  function_name    = "iam-key-url-regenerator"
-  role            = aws_iam_role.url_regenerator_exec.arn
-  handler         = "url_regenerator.lambda_handler"
-  source_code_hash = data.archive_file.url_regenerator_lambda.output_base64sha256
-  runtime         = "python3.11"
-  timeout         = 300  # 5 minutes for processing multiple users
-  memory_size     = 512
+  filename                       = data.archive_file.url_regenerator_lambda.output_path
+  function_name                  = local.url_regenerator_name
+  role                           = aws_iam_role.url_regenerator_exec.arn
+  handler                        = "url_regenerator.url_regenerator.lambda_handler"
+  source_code_hash               = data.archive_file.url_regenerator_lambda.output_base64sha256
+  runtime                        = "python3.11"
+  timeout                        = 300
+  memory_size                    = 512
+  kms_key_arn                    = aws_kms_key.data.arn
+  reserved_concurrent_executions = local.lambda_reserved_concurrency.url_regenerator
+
+  dead_letter_config {
+    target_arn = aws_sqs_queue.lambda_failures.arn
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -108,21 +147,26 @@ resource "aws_lambda_function" "url_regenerator" {
   }
 
   tags = var.common_tags
+
+  depends_on = [
+    aws_cloudwatch_log_group.url_regenerator
+  ]
 }
 
 # CloudWatch log group
 resource "aws_cloudwatch_log_group" "url_regenerator" {
-  name              = "/aws/lambda/${aws_lambda_function.url_regenerator.function_name}"
-  retention_in_days = 30
+  name              = "/aws/lambda/${local.url_regenerator_name}"
+  retention_in_days = local.log_retention_days
+  kms_key_id        = aws_kms_key.logs.arn
 
   tags = var.common_tags
 }
 
 # EventBridge rule to trigger daily at 2 AM UTC
 resource "aws_cloudwatch_event_rule" "url_regenerator_schedule" {
-  name                = "iam-key-url-regenerator-daily"
+  name                = local.url_regenerator_rule_name
   description         = "Trigger URL regeneration for expiring pre-signed URLs"
-  schedule_expression = "cron(0 2 * * ? *)"  # 2 AM UTC daily
+  schedule_expression = "cron(0 2 * * ? *)" # 2 AM UTC daily
 
   tags = var.common_tags
 }
@@ -130,7 +174,7 @@ resource "aws_cloudwatch_event_rule" "url_regenerator_schedule" {
 # EventBridge target
 resource "aws_cloudwatch_event_target" "url_regenerator" {
   rule      = aws_cloudwatch_event_rule.url_regenerator_schedule.name
-  target_id = "url-regenerator-lambda"
+  target_id = "${local.url_regenerator_name}-target"
   arn       = aws_lambda_function.url_regenerator.arn
 }
 

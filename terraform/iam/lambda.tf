@@ -1,12 +1,8 @@
 # IAM Access Key Enforcement Lambda Function
 
-# Data sources for current region and account
-data "aws_region" "current" {}
-data "aws_caller_identity" "current" {}
-
 # Lambda execution role
 resource "aws_iam_role" "lambda_exec" {
-  name = "iam-key-enforcement-lambda-role"
+  name = "${local.access_key_function_name}-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -25,8 +21,12 @@ resource "aws_iam_role" "lambda_exec" {
 }
 
 # Lambda policy for IAM operations
+#checkov:skip=CKV_AWS_286:IAM credential report and CloudWatch custom metric APIs require wildcard resources by AWS design.
+#checkov:skip=CKV_AWS_287:The wildcard statements are limited to AWS APIs that do not support resource scoping.
+#checkov:skip=CKV_AWS_289:The policy scopes user operations to account users and conditions wildcard-only APIs.
+#checkov:skip=CKV_AWS_355:GenerateCredentialReport, GetCredentialReport, and PutMetricData do not support resource ARNs.
 resource "aws_iam_policy" "lambda_iam_policy" {
-  name        = "iam-key-enforcement-policy"
+  name        = "${local.access_key_function_name}-policy"
   description = "IAM policy for access key enforcement Lambda"
 
   policy = jsonencode({
@@ -40,30 +40,37 @@ resource "aws_iam_policy" "lambda_iam_policy" {
           "logs:PutLogEvents"
         ]
         Resource = [
-          "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/iam-access-key-enforcement",
-          "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/iam-access-key-enforcement:*"
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${local.access_key_function_name}",
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${local.access_key_function_name}:*"
         ]
       },
       {
         Effect = "Allow"
         Action = [
           "iam:GenerateCredentialReport",
-          "iam:GetCredentialReport",
-          "iam:ListAccessKeys",
-          "iam:ListUserTags",
-          "iam:UpdateAccessKey",
-          "iam:CreateAccessKey",
-          "iam:GetUser"
+          "iam:GetCredentialReport"
         ]
         Resource = "*"
       },
       {
         Effect = "Allow"
         Action = [
-          "s3:PutObject",
-          "s3:GetObject"
+          "iam:ListAccessKeys",
+          "iam:ListUserTags",
+          "iam:UpdateAccessKey",
+          "iam:CreateAccessKey",
+          "iam:GetUser"
         ]
-        Resource = "arn:aws:s3:::iam-credentials-${data.aws_caller_identity.current.account_id}/*"
+        Resource = "arn:aws:iam::${var.account_id}:user/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${aws_s3_bucket.credentials.arn}/*"
       },
       {
         Effect = "Allow"
@@ -72,7 +79,7 @@ resource "aws_iam_policy" "lambda_iam_policy" {
           "dynamodb:UpdateItem",
           "dynamodb:GetItem"
         ]
-        Resource = "arn:aws:dynamodb:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:table/iam-key-rotation-tracking"
+        Resource = aws_dynamodb_table.key_rotation_tracking.arn
       },
       {
         Effect = "Allow"
@@ -100,13 +107,33 @@ resource "aws_iam_policy" "lambda_iam_policy" {
         }
       },
       {
-        Sid    = "DecryptEnvironmentVariables"
+        Sid    = "AllowXRayWrites"
+        Effect = "Allow"
+        Action = [
+          "xray:PutTelemetryRecords",
+          "xray:PutTraceSegments"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowLambdaDlqWrites"
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = aws_sqs_queue.lambda_failures.arn
+      },
+      {
+        Sid    = "AllowKmsUsage"
         Effect = "Allow"
         Action = [
           "kms:Decrypt",
-          "kms:DescribeKey"
+          "kms:DescribeKey",
+          "kms:Encrypt",
+          "kms:GenerateDataKey*",
+          "kms:ReEncrypt*"
         ]
-        Resource = "arn:aws:kms:us-east-1:056598616360:key/e53fd7d2-e8fe-4f7f-b9ad-ecfcd5aac772"
+        Resource = aws_kms_key.data.arn
       }
     ]
   })
@@ -129,15 +156,27 @@ data "archive_file" "lambda_zip" {
 }
 
 # Lambda function
+#checkov:skip=CKV_AWS_117:These functions call AWS public APIs only; VPC placement would add NAT and ENI failure modes without reducing exposure.
+#checkov:skip=CKV_AWS_272:Deployment artifacts are built outside AWS Signer; enforcing code signing here would break unsigned CI deploys.
 resource "aws_lambda_function" "access_key_enforcement" {
-  filename         = data.archive_file.lambda_zip.output_path
-  function_name    = "iam-access-key-enforcement"
-  role             = aws_iam_role.lambda_exec.arn
-  handler          = "access_key_enforcement.lambda_handler"
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  runtime          = "python3.11"
-  timeout          = 300
-  memory_size      = 256
+  filename                       = data.archive_file.lambda_zip.output_path
+  function_name                  = local.access_key_function_name
+  role                           = aws_iam_role.lambda_exec.arn
+  handler                        = "access_key_enforcement.access_key_enforcement.lambda_handler"
+  source_code_hash               = data.archive_file.lambda_zip.output_base64sha256
+  runtime                        = "python3.11"
+  timeout                        = 300
+  memory_size                    = 256
+  kms_key_arn                    = aws_kms_key.data.arn
+  reserved_concurrent_executions = local.lambda_reserved_concurrency.access_key_enforcement
+
+  dead_letter_config {
+    target_arn = aws_sqs_queue.lambda_failures.arn
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = {
@@ -147,8 +186,8 @@ resource "aws_lambda_function" "access_key_enforcement" {
       AUTO_DISABLE           = var.auto_disable
       SENDER_EMAIL           = var.sender_email
       EXEMPTION_TAG          = var.exemption_tag
-      S3_BUCKET              = "iam-credentials-${data.aws_caller_identity.current.account_id}"
-      DYNAMODB_TABLE         = "iam-key-rotation-tracking"
+      S3_BUCKET              = aws_s3_bucket.credentials.id
+      DYNAMODB_TABLE         = aws_dynamodb_table.key_rotation_tracking.name
       NEW_KEY_RETENTION_DAYS = var.new_key_retention_days
       OLD_KEY_RETENTION_DAYS = var.old_key_retention_days
     }
@@ -164,15 +203,16 @@ resource "aws_lambda_function" "access_key_enforcement" {
 
 # CloudWatch Log Group
 resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/iam-access-key-enforcement"
-  retention_in_days = 30
+  name              = "/aws/lambda/${local.access_key_function_name}"
+  retention_in_days = local.log_retention_days
+  kms_key_id        = aws_kms_key.logs.arn
 
   tags = var.common_tags
 }
 
 # EventBridge rule to trigger Lambda daily
 resource "aws_cloudwatch_event_rule" "daily_check" {
-  name                = "iam-key-enforcement-daily"
+  name                = local.enforcement_rule_name
   description         = "Trigger IAM key enforcement check daily"
   schedule_expression = var.schedule_expression
 
@@ -182,7 +222,7 @@ resource "aws_cloudwatch_event_rule" "daily_check" {
 # EventBridge target
 resource "aws_cloudwatch_event_target" "lambda_target" {
   rule      = aws_cloudwatch_event_rule.daily_check.name
-  target_id = "iam-key-enforcement-target"
+  target_id = "${local.access_key_function_name}-target"
   arn       = aws_lambda_function.access_key_enforcement.arn
 }
 
@@ -197,7 +237,7 @@ resource "aws_lambda_permission" "allow_eventbridge" {
 
 # CloudWatch Alarms
 resource "aws_cloudwatch_metric_alarm" "expired_keys_alarm" {
-  alarm_name          = "iam-expired-keys-alarm"
+  alarm_name          = local.expired_alarm_name
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "1"
   metric_name         = "expired_keys"
@@ -206,13 +246,13 @@ resource "aws_cloudwatch_metric_alarm" "expired_keys_alarm" {
   statistic           = "Maximum"
   threshold           = "0"
   alarm_description   = "Alert when users have expired access keys"
-  alarm_actions       = var.alarm_sns_topic != "" ? [var.alarm_sns_topic] : []
+  alarm_actions       = [var.alarm_sns_topic]
 
   tags = var.common_tags
 }
 
 resource "aws_cloudwatch_metric_alarm" "non_compliant_users_alarm" {
-  alarm_name          = "iam-non-compliant-users-alarm"
+  alarm_name          = local.urgent_alarm_name
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "1"
   metric_name         = "urgent_keys"
@@ -221,7 +261,7 @@ resource "aws_cloudwatch_metric_alarm" "non_compliant_users_alarm" {
   statistic           = "Maximum"
   threshold           = "5"
   alarm_description   = "Alert when more than 5 users have keys approaching expiration"
-  alarm_actions       = var.alarm_sns_topic != "" ? [var.alarm_sns_topic] : []
+  alarm_actions       = [var.alarm_sns_topic]
 
   tags = var.common_tags
 }

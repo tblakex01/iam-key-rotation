@@ -6,27 +6,39 @@ based on a strict password policy w/ max password age of 90 days
 
 import time
 from datetime import datetime
-from dateutil import parser
-import boto3
+from dateutil import parser  # type: ignore[import-untyped]
 
-iam_client = boto3.client("iam")
-ses_client = boto3.client("ses")
+from common.email import EmailConfig, send_html_email
+
+iam_client = None
+
+
+def get_iam_client():
+    """Return a cached IAM client."""
+    global iam_client
+    if iam_client is None:
+        import boto3
+
+        iam_client = boto3.client("iam")
+    return iam_client
 
 
 def lambda_handler(event, context):
     """Get IAM creds report, check for expiring passwords & notify users"""
-    iam_client.generate_credential_report()
+    iam = get_iam_client()
+    email_config = EmailConfig.load()
+    iam.generate_credential_report()
 
     while True:
         # Wait before checking the report status again
         time.sleep(5)
 
         # Get the credential report generation status
-        response = iam_client.get_credential_report()
+        response = iam.get_credential_report()
         if "Content" in response:
             break
 
-    credential_report = iam_client.get_credential_report()
+    credential_report = iam.get_credential_report()
     credential_report_csv = credential_report["Content"].decode("utf-8")
 
     # Process the credential report
@@ -45,7 +57,7 @@ def lambda_handler(event, context):
 
             if days_since_password_change > 78:
                 # Retrieve user's email address from tags
-                response = iam_client.list_user_tags(UserName=username)
+                response = iam.list_user_tags(UserName=username)
                 if email := next(
                     (tag["Value"] for tag in response["Tags"] if tag["Key"] == "email"),
                     None,
@@ -54,10 +66,8 @@ def lambda_handler(event, context):
 
     # Send email notifications
     for user in users_to_notify:
-        username = user[
-            "username"
-        ]  # Get the username for the current user in the notify list
-        message = f"""
+        username = user["username"]
+        html_message = f"""
             <html>
             <body>
                 <p>Hello {username},</p>
@@ -71,14 +81,12 @@ def lambda_handler(event, context):
                 <p>Cloud Admins</p>
             </body>
             </html>
-            """
-        ses_client.send_email(
-            Source="cloud-admins@jennasrunbooks.com",
-            Destination={"ToAddresses": [user["email"]]},
-            Message={
-                "Subject": {"Data": "AWS Password Expiry Notification"},
-                "Body": {"Html": {"Data": message}},
-            },
+        """
+        send_html_email(
+            config=email_config,
+            to_addresses=[user["email"]],
+            subject="AWS Password Expiry Notification",
+            html_body=html_message,
         )
 
     return "Password expiry notifications sent."

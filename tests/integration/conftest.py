@@ -47,15 +47,13 @@ def temp_credentials_file(tmp_path):
     creds_file = creds_dir / "credentials"
 
     # Create sample credentials
-    creds_file.write_text(
-        """[default]
+    creds_file.write_text("""[default]
 aws_access_key_id = AKIAIOSFODNN7EXAMPLE
 aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 
 [production]
 aws_access_key_id = AKIAIOSFODNN7PROD
 aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYPRODKEY
-"""
-    )
+""")
 
     return creds_file

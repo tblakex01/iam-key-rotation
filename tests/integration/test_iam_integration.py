@@ -35,8 +35,7 @@ class TestAWSIAMKeyRotation(unittest.TestCase):
 
         # Create a sample credentials file with multiple profiles
         with open(self.credentials_file, "w") as f:
-            f.write(
-                """[default]
+            f.write("""[default]
 aws_access_key_id = AKIAIOSFODNN7EXAMPLE
 aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 
@@ -47,8 +46,7 @@ aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYPRODKEY
 [development]
 aws_access_key_id = AKIAIOSFODNN7DEV
 aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYDEVKEY
-"""
-            )
+""")
 
     def tearDown(self):
         """Clean up test fixtures"""

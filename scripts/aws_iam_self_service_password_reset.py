@@ -5,17 +5,23 @@ Simple self service password reset tool for clients
 To be run by any AWS IAM user to reset their own password
 """
 
-import secrets
-import string
 import logging
 import getpass
+import secrets  # noqa: F401
 import sys
 from datetime import datetime
+from pathlib import Path
+
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError, PartialCredentialsError
 from rich.console import Console
 from rich.prompt import Prompt
 from rich import print as rprint
+
+SCRIPT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SCRIPT_ROOT / "lambda"))
+
+from common.iam_passwords import generate_temporary_password  # noqa: E402
 
 # Configure logging
 logging.basicConfig(
@@ -70,92 +76,6 @@ def get_current_user():
         else:
             rprint(f"[red]Error:[/red] Failed to get user information: {e}")
         return None
-
-
-def validate_password_policy(password):
-    """Validate password against AWS password policy"""
-    try:
-        client = boto3.client("iam")
-        response = client.get_account_password_policy()
-        policy = response["PasswordPolicy"]
-
-        errors = []
-
-        # Check minimum length
-        min_length = policy.get("MinimumPasswordLength", 8)
-        if len(password) < min_length:
-            errors.append(f"Password must be at least {min_length} characters long")
-
-        # Check character requirements
-        if policy.get("RequireUppercaseCharacters", False):
-            if not any(c.isupper() for c in password):
-                errors.append("Password must contain uppercase letters")
-
-        if policy.get("RequireLowercaseCharacters", False):
-            if not any(c.islower() for c in password):
-                errors.append("Password must contain lowercase letters")
-
-        if policy.get("RequireNumbers", False):
-            if not any(c.isdigit() for c in password):
-                errors.append("Password must contain numbers")
-
-        if policy.get("RequireSymbols", False):
-            if not any(c in string.punctuation for c in password):
-                errors.append("Password must contain symbols")
-
-        return errors
-
-    except (ClientError, NoCredentialsError, PartialCredentialsError):
-        # If policy cannot be retrieved (e.g., no credentials), fall back to basic checks
-        logger.warning("Could not retrieve password policy, using default validation")
-        errors = []
-        if len(password) < 8:
-            errors.append("Password must be at least 8 characters long")
-        return errors
-
-
-def passwordgen(length=20, exclude_ambiguous=True):
-    """
-    Generate a secure password that meets AWS password policy requirements
-    """
-    # Character sets
-    uppercase = string.ascii_uppercase
-    lowercase = string.ascii_lowercase
-    digits = string.digits
-    symbols = "!@#$%^&*()_+-=[]{}|;:,.<>?"
-
-    # Remove ambiguous characters if requested
-    if exclude_ambiguous:
-        ambiguous = "0O1lI"
-        uppercase = "".join(c for c in uppercase if c not in ambiguous)
-        lowercase = "".join(c for c in lowercase if c not in ambiguous)
-        digits = "".join(c for c in digits if c not in ambiguous)
-
-    # Ensure password has at least one character from each required set
-    password_chars = [
-        secrets.choice(uppercase),
-        secrets.choice(lowercase),
-        secrets.choice(digits),
-        secrets.choice(symbols),
-    ]
-
-    # Fill the rest of the password length
-    all_chars = uppercase + lowercase + digits + symbols
-    for _ in range(length - 4):
-        password_chars.append(secrets.choice(all_chars))
-
-    # Shuffle the password characters
-    secrets.SystemRandom().shuffle(password_chars)
-    password = "".join(password_chars)
-
-    # Validate the generated password
-    validation_errors = validate_password_policy(password)
-    if validation_errors:
-        logger.warning(f"Generated password failed validation: {validation_errors}")
-        # Retry with a longer password
-        return passwordgen(length + 5, exclude_ambiguous)
-
-    return password
 
 
 def secure_password_display(password):
@@ -222,7 +142,7 @@ def main():
     try:
         # Generate new password
         rprint("\n[blue]Generating new password...[/blue]")
-        new_password = passwordgen()
+        new_password = generate_temporary_password(client)
 
         # Get current password securely
         rprint("\n[yellow]Please enter your current password:[/yellow]")

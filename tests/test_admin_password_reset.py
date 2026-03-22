@@ -15,26 +15,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import aws_iam_user_password_reset as admin_reset  # noqa: E402
 
 
-class TestPasswordGeneration(unittest.TestCase):
-    """Test admin password generation functionality"""
-
-    def test_passwordgen_meets_requirements(self):
-        """Test that generated passwords meet AWS requirements"""
-        import string
-
-        for _ in range(10):
-            password = admin_reset.passwordgen()
-
-            # Check length
-            self.assertEqual(len(password), 20)
-
-            # Check for required character classes
-            self.assertTrue(any(c in string.ascii_uppercase for c in password))
-            self.assertTrue(any(c in string.ascii_lowercase for c in password))
-            self.assertTrue(any(c in string.digits for c in password))
-            self.assertTrue(any(c in string.punctuation for c in password))
-
-
 class TestClientCreation(unittest.TestCase):
     """Test IAM client creation functionality"""
 

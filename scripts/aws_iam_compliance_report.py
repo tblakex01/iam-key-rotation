@@ -197,10 +197,10 @@ class IAMComplianceReport:
         metrics = {
             "key_1_age": None,
             "key_2_age": None,
-            "password_age": None,
+            "password_age": None,  # nosec B105
             "key_1_compliance": "N/A",
             "key_2_compliance": "N/A",
-            "password_compliance": "N/A",
+            "password_compliance": "N/A",  # nosec B105
             "overall_compliance": "UNKNOWN",
         }
 

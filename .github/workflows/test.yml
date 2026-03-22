@@ -1,183 +1,124 @@
-name: AWS IAM Key Rotation Tests
+name: CI
 
 on:
-  push:
-    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  test:
+  python-quality:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [3.9, 3.11, 3.12]
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v5
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            scripts/requirements.txt
+            tests/requirements.txt
 
-    - name: Create virtual environment
-      run: |
-        python -m venv venv
-        source venv/bin/activate
-        echo "VIRTUAL_ENV=$VIRTUAL_ENV" >> $GITHUB_ENV
-        echo "$VIRTUAL_ENV/bin" >> $GITHUB_PATH
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt -r tests/requirements.txt
 
-    - name: Install dependencies
-      run: |
-        source venv/bin/activate
-        python -m pip install --upgrade pip
-        pip install -r scripts/requirements.txt
+      - name: Check formatting
+        run: black --check .
 
-    - name: Run security checks
-      run: |
-        source venv/bin/activate
-        # Check for common security issues
-        python -c "
-        import re
-        import os
-        from pathlib import Path
-        
-        # Check for hardcoded AWS keys
-        aws_key_pattern = re.compile(r'AKIA[0-9A-Z]{16}')
-        secret_pattern = re.compile(r'[A-Za-z0-9/+=]{40}')
-        
-        for py_file in Path('.').rglob('*.py'):
-            if 'test' in str(py_file) or '__pycache__' in str(py_file):
-                continue
-            try:
-                content = py_file.read_text()
-                if aws_key_pattern.search(content) and 'AKIAEXAMPLE' not in content:
-                    print(f'❌ Potential AWS key found in {py_file}')
-                    exit(1)
-            except:
-                pass
-        print('✅ No hardcoded AWS keys found')
-        "
+      - name: Lint Python
+        run: flake8 scripts/ lambda/ tests/ --max-line-length=120 --ignore=E501,W503,E203
 
-    - name: Run unit tests
-      run: |
-        source venv/bin/activate
-        pytest
+      - name: Type check Python
+        run: mypy scripts/ lambda/
 
-    - name: Test Lambda package creation
-      run: |
-        source venv/bin/activate
-        cd lambda/access_key_enforcement
-        zip -r test-package.zip . -x "*.pyc" "__pycache__/*"
-        echo "✅ Lambda package created successfully"
-        rm test-package.zip
+      - name: Security scan Python
+        run: bandit -r scripts/ lambda/
 
-    - name: Validate Terraform syntax
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.5.7
+      - name: Run unit and integration tests
+        run: pytest
 
-    - name: Terraform format check
-      run: |
-        cd terraform/iam
-        terraform fmt -check=true -diff=true
-
-    - name: Terraform validation
-      run: |
-        cd terraform/iam
-        terraform init -backend=false
-        terraform validate
-
-    - name: Test compliance report generation (dry run)
-      run: |
-        source venv/bin/activate
-        # Test the compliance script with mock data
-        python -c "
-        import sys
-        sys.path.append('scripts')
-        # Basic import test
-        import aws_iam_compliance_report
-        print('✅ Compliance report script imports successfully')
-        "
-
-    - name: Lint Python code
-      run: |
-        source venv/bin/activate
-        # Install flake8 for linting
-        pip install flake8
-        # Run linting with relaxed rules for this legacy codebase
-        flake8 scripts/ lambda/ tests/ --max-line-length=120 --ignore=E501,W503,E203
-
-  security-scan:
+  terraform-quality:
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v5
 
-    - name: Run Bandit security scan
-      run: |
-        pip install bandit
-        # Scan for security issues, excluding test files
-        bandit -r scripts/ lambda/ -f json -o bandit-report.json || true
-        
-        # Check if any high severity issues found
-        if [ -f bandit-report.json ]; then
-          HIGH_ISSUES=$(python -c "
-          import json
-          try:
-              with open('bandit-report.json') as f:
-                  data = json.load(f)
-              high_issues = [r for r in data.get('results', []) if r.get('issue_severity') == 'HIGH']
-              print(len(high_issues))
-          except:
-              print(0)
-          ")
-          
-          if [ "$HIGH_ISSUES" -gt "0" ]; then
-            echo "❌ Found $HIGH_ISSUES high severity security issues"
-            cat bandit-report.json
-            exit 1
-          else
-            echo "✅ No high severity security issues found"
-          fi
-        fi
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.11.1"
 
-    - name: Upload security scan results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: security-scan-results
-        path: bandit-report.json
+      - name: Set up TFLint
+        uses: terraform-linters/setup-tflint@v6
 
-  integration-test:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-    - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            scripts/requirements.txt
+            tests/requirements.txt
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.11
+      - name: Install Terraform scanners
+        run: |
+          python -m pip install --upgrade pip
+          pip install checkov
 
-    - name: Install dependencies
-      run: |
-        python -m venv venv
-        source venv/bin/activate
-        pip install -r scripts/requirements.txt
+      - name: Terraform format check
+        run: terraform -chdir=terraform/iam fmt -check -recursive
 
-    - name: Test script execution (dry run)
-      run: |
-        source venv/bin/activate
-        
-        # Test that scripts can be imported and basic help works
-        echo "Testing key rotation script..."
-        python scripts/aws_iam_self_service_key_rotation.py --help
-        
-        echo "Testing password reset script..."
-        python scripts/aws_iam_self_service_password_reset.py --help || echo "Expected - requires interaction"
-        
-        echo "Testing compliance report script..."
-        python scripts/aws_iam_compliance_report.py --help
-        
-        echo "✅ All scripts can be executed"
+      - name: Terraform init
+        run: terraform -chdir=terraform/iam init -backend=false -input=false
+
+      - name: Terraform validate
+        run: |
+          cat > terraform/iam/ci.auto.tfvars.json <<'EOF'
+          {
+            "name_prefix": "iam-key-rotation",
+            "environment_name": "ci",
+            "account_id": "123456789012",
+            "aws_region": "us-east-1",
+            "sender_email": "security@example.com",
+            "alarm_sns_topic": "arn:aws:sns:us-east-1:123456789012:iam-key-rotation-alerts",
+            "common_tags": {
+              "Application": "iam-key-rotation",
+              "Environment": "ci"
+            },
+            "managed_user_info": {},
+            "lambda_source_dir": "${{ github.workspace }}/lambda",
+            "download_tracker_source_dir": "${{ github.workspace }}/lambda",
+            "url_regenerator_source_dir": "${{ github.workspace }}/lambda",
+            "cleanup_source_dir": "${{ github.workspace }}/lambda",
+            "s3_cleanup_source_dir": "${{ github.workspace }}/lambda"
+          }
+          EOF
+          terraform -chdir=terraform/iam validate -no-color
+
+      - name: TFLint
+        run: tflint --chdir=terraform/iam --format compact
+
+      - name: Checkov
+        run: checkov -d terraform/iam --quiet
+
+      - name: Configure AWS credentials
+        if: ${{ vars.AWS_ROLE_TO_ASSUME != '' }}
+        uses: aws-actions/configure-aws-credentials@v5.1.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: us-east-1
+
+      - name: Terraform plan
+        if: ${{ vars.AWS_ROLE_TO_ASSUME != '' }}
+        run: terraform -chdir=terraform/iam plan -refresh=false -input=false -lock=false -no-color -out=tfplan

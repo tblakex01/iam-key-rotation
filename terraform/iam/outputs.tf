@@ -9,6 +9,26 @@ output "lambda_function_name" {
   value       = aws_lambda_function.access_key_enforcement.function_name
 }
 
+output "access_key_recovery_function_arn" {
+  description = "ARN of the self-service access-key recovery request Lambda function"
+  value       = aws_lambda_function.access_key_recovery_request.arn
+}
+
+output "access_key_recovery_function_name" {
+  description = "Name of the self-service access-key recovery request Lambda function"
+  value       = aws_lambda_function.access_key_recovery_request.function_name
+}
+
+output "access_key_recovery_api_endpoint" {
+  description = "Invoke URL for the self-service access-key recovery HTTP API stage"
+  value       = aws_apigatewayv2_stage.access_key_recovery.invoke_url
+}
+
+output "access_key_recovery_api_id" {
+  description = "API Gateway HTTP API ID for the self-service access-key recovery endpoint"
+  value       = aws_apigatewayv2_api.access_key_recovery.id
+}
+
 output "lambda_log_group" {
   description = "CloudWatch log group for the Lambda function"
   value       = aws_cloudwatch_log_group.lambda_logs.name
@@ -39,7 +59,7 @@ output "non_compliant_users_alarm_name" {
 
 # IAM users outputs
 output "iam_users" {
-  description = "Map of created IAM users"
+  description = "Map of explicitly managed IAM users"
   value = {
     for name, user in aws_iam_user.this :
     name => {
@@ -54,35 +74,16 @@ output "iam_users" {
 output "configuration_summary" {
   description = "Summary of Lambda configuration"
   value = {
-    warning_threshold = var.warning_threshold
-    urgent_threshold  = var.urgent_threshold
-    disable_threshold = var.disable_threshold
-    auto_disable      = var.auto_disable
-    sender_email      = var.sender_email
-    schedule          = var.schedule_expression
+    warning_threshold                         = var.warning_threshold
+    urgent_threshold                          = var.urgent_threshold
+    disable_threshold                         = var.disable_threshold
+    auto_disable                              = var.auto_disable
+    sender_email                              = var.sender_email
+    support_email                             = coalesce(var.support_email, var.sender_email)
+    schedule                                  = var.schedule_expression
+    access_key_recovery_request_cooldown_mins = var.access_key_recovery_request_cooldown_minutes
+    access_key_recovery_max_requests_per_day  = var.access_key_recovery_max_requests_per_day
   }
-}
-
-# Output access key information for testing
-output "test_user_access_keys" {
-  description = "Access key information for test users (for testing purposes only)"
-  value = {
-    for username, key in aws_iam_access_key.this : username => {
-      access_key_id = key.id
-      creation_date = key.create_date
-      # Note: secret is not output for security (stored in terraform state only)
-    }
-  }
-  sensitive = false
-}
-
-# Output access key secrets (marked sensitive so they don't show in logs)
-output "test_user_access_key_secrets" {
-  description = "Access key secrets for test users (sensitive - for testing only)"
-  value = {
-    for username, key in aws_iam_access_key.this : username => key.secret
-  }
-  sensitive = true
 }
 
 # S3 bucket outputs
@@ -107,6 +108,16 @@ output "tracking_table_arn" {
   value       = aws_dynamodb_table.key_rotation_tracking.arn
 }
 
+output "operations_dashboard_name" {
+  description = "CloudWatch dashboard for the key rotation system"
+  value       = aws_cloudwatch_dashboard.key_rotation.dashboard_name
+}
+
+output "lambda_failures_dlq_name" {
+  description = "SQS DLQ receiving failed asynchronous Lambda invocations"
+  value       = aws_sqs_queue.lambda_failures.name
+}
+
 # New Lambda function outputs
 output "download_tracker_function_arn" {
   description = "ARN of the download tracker Lambda function"
@@ -127,7 +138,11 @@ output "cleanup_function_arn" {
 output "key_rotation_system_summary" {
   description = "Complete summary of the automated key rotation system"
   value = {
+    resource_prefix         = local.resource_prefix
+    environment_name        = var.environment_name
     enforcement_lambda      = aws_lambda_function.access_key_enforcement.function_name
+    access_key_recovery     = aws_lambda_function.access_key_recovery_request.function_name
+    access_key_recovery_api = aws_apigatewayv2_stage.access_key_recovery.invoke_url
     download_tracker        = aws_lambda_function.download_tracker.function_name
     url_regenerator         = aws_lambda_function.url_regenerator.function_name
     cleanup_lambda          = aws_lambda_function.cleanup.function_name

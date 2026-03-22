@@ -1,178 +1,137 @@
-"""
-IAM Key Download Tracker Lambda Function
+"""IAM credential download tracker Lambda."""
 
-Triggered by S3 GetObject events when user downloads credentials.
-Updates DynamoDB tracking table and deletes S3 file for security.
-"""
+from __future__ import annotations
 
 import json
 import logging
 import os
-from datetime import datetime
 
 import boto3
 from botocore.exceptions import ClientError
 
-# Configure logging
+from common.rotation_common import DOWNLOADED, isoformat, utc_now
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# AWS clients
-s3 = boto3.client("s3")
-dynamodb = boto3.resource("dynamodb")
-
-# Configuration from environment
-DYNAMODB_TABLE = os.environ.get("DYNAMODB_TABLE", "iam-key-rotation-tracking")
-table = dynamodb.Table(DYNAMODB_TABLE)
+s3 = None
+dynamodb = None
 
 
-def lambda_handler(event, context):
-    """
-    Handle CloudTrail S3 GetObject event for credential downloads.
-    
-    Args:
-        event: EventBridge event from CloudTrail
-        context: Lambda context
-        
-    Returns:
-        dict: Response with status and details
-    """
-    logger.info("Download tracker triggered")
-    logger.info(f"Event: {json.dumps(event)}")
-    
-    processed = 0
-    errors = []
-    
-    # EventBridge wraps CloudTrail events differently than S3 notifications
-    try:
-        # Extract CloudTrail event details from EventBridge
-        detail = event.get("detail", {})
-        
-        # Get S3 details from CloudTrail event
-        request_params = detail.get("requestParameters", {})
-        bucket = request_params.get("bucketName")
-        s3_key = request_params.get("key")
-        event_time = detail.get("eventTime")
-        
-        # Extract IP address from CloudTrail event
-        ip_address = detail.get("sourceIPAddress", "unknown")
-        
-        # Parse username from S3 key (format: credentials/username/timestamp-credentials.json)
-        if not s3_key or not s3_key.startswith("credentials/"):
-            logger.warning(f"Skipping non-credential file: {s3_key}")
-            return {
-                "statusCode": 200,
-                "body": json.dumps({"message": "Not a credential file, skipping"})
+def get_s3_client():
+    global s3
+    if s3 is None:
+        s3 = boto3.client("s3")
+    return s3
+
+
+def get_dynamodb_resource():
+    global dynamodb
+    if dynamodb is None:
+        dynamodb = boto3.resource("dynamodb")
+    return dynamodb
+
+
+def get_table():
+    return get_dynamodb_resource().Table(os.environ["DYNAMODB_TABLE"])
+
+
+def lambda_handler(event, context):  # noqa: ARG001
+    """Handle a CloudTrail GetObject event for credential downloads."""
+    s3_key = extract_s3_key(event)
+    bucket = extract_bucket(event)
+    event_time = event.get("detail", {}).get("eventTime") or isoformat(utc_now())
+    ip_address = event.get("detail", {}).get("sourceIPAddress", "unknown")
+
+    if not s3_key or not bucket:
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {"message": "Event does not contain a credential download"}
+            ),
+        }
+
+    if not s3_key.startswith("credentials/"):
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"message": "Skipping non-credential object"}),
+        }
+
+    delete_s3_file(bucket, s3_key)
+    updated = update_tracking_record(s3_key, event_time, ip_address)
+    return {
+        "statusCode": 200,
+        "body": json.dumps(
+            {
+                "message": "Download tracking completed",
+                "s3_key": s3_key,
+                "updated": updated,
             }
-            
-        parts = s3_key.split("/")
-        if len(parts) < 3:
-            logger.warning(f"Invalid S3 key format: {s3_key}")
-            return {
-                "statusCode": 200,
-                "body": json.dumps({"message": "Invalid key format, skipping"})
-            }
-            
-        username = parts[1]
-        
-        logger.info(f"Processing download for user: {username}, IP: {ip_address}")
-        
-        # Update DynamoDB - mark as downloaded
-        update_tracking_record(username, event_time, ip_address)
-        
-        # Delete S3 file for security (one-time download)
-        delete_s3_file(bucket, s3_key)
-        
-        processed = 1
-        
-    except Exception as e:
-        error_msg = f"Error processing CloudTrail event: {str(e)}"
-        logger.error(error_msg)
-        errors.append(error_msg)
-    
-    response = {
-        "statusCode": 200 if not errors else 207,
-        "body": json.dumps({
-            "message": "Download tracking completed",
-            "processed": processed,
-            "errors": errors if errors else None
-        })
+        ),
     }
-    
-    logger.info(f"Download tracker completed: {processed} processed, {len(errors)} errors")
-    return response
 
 
-def update_tracking_record(username, download_time, ip_address):
-    """
-    Update DynamoDB tracking record with download details.
-    
-    Args:
-        username: IAM username
-        download_time: ISO 8601 timestamp of download
-        ip_address: Source IP address
-    """
+def extract_bucket(event: dict) -> str | None:
+    return event.get("detail", {}).get("requestParameters", {}).get("bucketName")
+
+
+def extract_s3_key(event: dict) -> str | None:
+    return event.get("detail", {}).get("requestParameters", {}).get("key")
+
+
+def find_tracking_record_by_s3_key(s3_key: str) -> dict | None:
+    response = get_table().query(
+        IndexName="s3-key-index",
+        KeyConditionExpression="s3_key = :s3_key",
+        ExpressionAttributeValues={":s3_key": s3_key},
+        Limit=1,
+    )
+    items = response.get("Items", [])
+    return items[0] if items else None
+
+
+def update_tracking_record(s3_key: str, download_time: str, ip_address: str) -> bool:
+    """Mark the exact rotation record for ``s3_key`` as downloaded."""
+    item = find_tracking_record_by_s3_key(s3_key)
+    if not item:
+        logger.warning("No tracking record found for %s", s3_key)
+        return False
+
     try:
-        # Query for the most recent rotation record for this user
-        response = table.query(
-            KeyConditionExpression="PK = :pk",
-            ExpressionAttributeValues={
-                ":pk": f"USER#{username}"
-            },
-            ScanIndexForward=False,  # Sort descending by SK (most recent first)
-            Limit=1
-        )
-        
-        if not response.get("Items"):
-            logger.warning(f"No tracking record found for user: {username}")
-            return
-        
-        item = response["Items"][0]
-        pk = item["PK"]
-        sk = item["SK"]
-        
-        # Update with download information
-        table.update_item(
-            Key={"PK": pk, "SK": sk},
+        get_table().update_item(
+            Key={"PK": item["PK"], "SK": item["SK"]},
             UpdateExpression=(
                 "SET downloaded = :true, "
                 "download_timestamp = :ts, "
                 "download_ip = :ip, "
                 "s3_file_deleted = :true, "
-                "s3_file_deletion_timestamp = :del_ts, "
+                "s3_file_deletion_timestamp = :deleted_at, "
                 "#status = :status"
             ),
-            ExpressionAttributeNames={
-                "#status": "status"
-            },
+            ConditionExpression="attribute_not_exists(downloaded) OR downloaded = :false",
+            ExpressionAttributeNames={"#status": "status"},
             ExpressionAttributeValues={
                 ":true": True,
+                ":false": False,
                 ":ts": download_time,
                 ":ip": ip_address,
-                ":del_ts": datetime.utcnow().isoformat(),
-                ":status": "downloaded"
-            }
+                ":deleted_at": isoformat(utc_now()),
+                ":status": DOWNLOADED,
+            },
         )
-        
-        logger.info(f"Updated tracking record for {username}: {pk}#{sk}")
-        
-    except ClientError as e:
-        logger.error(f"DynamoDB error updating record for {username}: {e}")
+        return True
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            logger.info("Download for %s was already recorded", s3_key)
+            return False
+        logger.exception("Failed to update tracking record for %s", s3_key)
         raise
 
 
-def delete_s3_file(bucket, s3_key):
-    """
-    Delete S3 file after successful download (one-time download security).
-    
-    Args:
-        bucket: S3 bucket name
-        s3_key: S3 object key
-    """
+def delete_s3_file(bucket: str, s3_key: str) -> None:
+    """Delete the credential file before recording state so retries stay safe."""
     try:
-        s3.delete_object(Bucket=bucket, Key=s3_key)
-        logger.info(f"Deleted S3 file: s3://{bucket}/{s3_key}")
-        
-    except ClientError as e:
-        logger.error(f"Error deleting S3 file {s3_key}: {e}")
+        get_s3_client().delete_object(Bucket=bucket, Key=s3_key)
+    except ClientError:
+        logger.exception("Failed to delete S3 object %s", s3_key)
         raise

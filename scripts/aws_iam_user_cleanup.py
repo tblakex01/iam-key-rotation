@@ -8,7 +8,15 @@ Terraform where these settings are managed outside of the code.
 import sys
 import boto3
 
-client = boto3.client("iam")
+client = None
+
+
+def get_iam_client():
+    """Return the cached IAM client, creating it only when needed."""
+    global client
+    if client is None:
+        client = boto3.client("iam")
+    return client
 
 
 def check_username():
@@ -18,9 +26,10 @@ def check_username():
         return None
 
     user_name = sys.argv[1]
+    iam_client = get_iam_client()
 
     # Use paginator to handle accounts with many users
-    paginator = client.get_paginator("list_users")
+    paginator = iam_client.get_paginator("list_users")
     existing_users = []
     for page in paginator.paginate():
         existing_users.extend([user["UserName"] for user in page["Users"]])
@@ -34,11 +43,12 @@ def check_username():
 
 def delete_login_profile(user_name):
     """Delete the login profile for the user"""
+    iam_client = get_iam_client()
     try:
-        client.delete_login_profile(UserName=user_name)
+        iam_client.delete_login_profile(UserName=user_name)
         print(f"Deleting login profile for {user_name}")
         return True
-    except client.exceptions.NoSuchEntityException:
+    except iam_client.exceptions.NoSuchEntityException:
         print(f"No login profile found for {user_name}")
         return True  # Not an error if profile doesn't exist
     except Exception as e:
@@ -48,9 +58,10 @@ def delete_login_profile(user_name):
 
 def delete_mfa_devices(user_name):
     """Get the list of MFA devices for the user and delete each MFA device"""
+    iam_client = get_iam_client()
     try:
         # Use paginator for MFA devices
-        paginator = client.get_paginator("list_mfa_devices")
+        paginator = iam_client.get_paginator("list_mfa_devices")
         mfa_devices = []
         for page in paginator.paginate(UserName=user_name):
             mfa_devices.extend(page.get("MFADevices", []))
@@ -64,7 +75,7 @@ def delete_mfa_devices(user_name):
             device_name = device["SerialNumber"]
             try:
                 print(f"Deleting MFA device for {user_name}: {device_name}")
-                client.deactivate_mfa_device(
+                iam_client.deactivate_mfa_device(
                     UserName=user_name, SerialNumber=device_name
                 )
             except Exception as e:
@@ -79,9 +90,10 @@ def delete_mfa_devices(user_name):
 
 def delete_access_keys(user_name):
     """Delete all access keys associated with user"""
+    iam_client = get_iam_client()
     try:
         # Use paginator to handle users with many keys
-        paginator = client.get_paginator("list_access_keys")
+        paginator = iam_client.get_paginator("list_access_keys")
         access_keys = []
         for page in paginator.paginate(UserName=user_name):
             access_keys.extend(page["AccessKeyMetadata"])
@@ -95,7 +107,9 @@ def delete_access_keys(user_name):
         for key in access_keys:
             access_key_id = key["AccessKeyId"]
             try:
-                client.delete_access_key(UserName=user_name, AccessKeyId=access_key_id)
+                iam_client.delete_access_key(
+                    UserName=user_name, AccessKeyId=access_key_id
+                )
                 print(f"Deleted access key: {access_key_id} for {user_name}")
             except Exception as e:
                 print(f"Error deleting access key {access_key_id}: {e}")

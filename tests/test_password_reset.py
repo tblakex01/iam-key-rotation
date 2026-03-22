@@ -15,120 +15,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import aws_iam_self_service_password_reset as pwd_reset  # noqa: E402
 
 
-class TestPasswordGeneration(unittest.TestCase):
-    """Test password generation functionality"""
-
-    @patch("aws_iam_self_service_password_reset.boto3.client")
-    def test_passwordgen_length(self, mock_boto_client):
-        """Test that generated passwords have correct length"""
-        mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.get_account_password_policy.return_value = {"PasswordPolicy": {}}
-
-        password = pwd_reset.passwordgen(20)
-        self.assertEqual(len(password), 20)
-
-        password = pwd_reset.passwordgen(30)
-        self.assertEqual(len(password), 30)
-
-    @patch("aws_iam_self_service_password_reset.boto3.client")
-    def test_passwordgen_character_requirements(self, mock_boto_client):
-        """Test that generated passwords meet character requirements"""
-        mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.get_account_password_policy.return_value = {"PasswordPolicy": {}}
-
-        password = pwd_reset.passwordgen(20)
-
-        # Check for uppercase letters
-        self.assertTrue(any(c.isupper() for c in password))
-
-        # Check for lowercase letters
-        self.assertTrue(any(c.islower() for c in password))
-
-        # Check for digits
-        self.assertTrue(any(c.isdigit() for c in password))
-
-        # Check for symbols
-        self.assertTrue(any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password))
-
-    @patch("aws_iam_self_service_password_reset.boto3.client")
-    def test_passwordgen_excludes_ambiguous(self, mock_boto_client):
-        """Test that ambiguous characters are excluded when requested"""
-        mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.get_account_password_policy.return_value = {"PasswordPolicy": {}}
-
-        password = pwd_reset.passwordgen(50, exclude_ambiguous=True)
-        ambiguous = "0O1lI"
-
-        for char in ambiguous:
-            self.assertNotIn(char, password)
-
-    @patch("aws_iam_self_service_password_reset.boto3.client")
-    def test_passwordgen_uniqueness(self, mock_boto_client):
-        """Test that multiple calls generate different passwords"""
-        mock_client = Mock()
-        mock_boto_client.return_value = mock_client
-        mock_client.get_account_password_policy.return_value = {"PasswordPolicy": {}}
-
-        passwords = [pwd_reset.passwordgen(20) for _ in range(10)]
-
-        # All passwords should be unique
-        self.assertEqual(len(passwords), len(set(passwords)))
-
-
-class TestPasswordPolicyValidation(unittest.TestCase):
-    """Test password policy validation"""
-
-    @patch("aws_iam_self_service_password_reset.boto3.client")
-    def test_validate_password_policy_success(self, mock_boto_client):
-        """Test successful password policy validation"""
-        # Mock IAM client and response
-        mock_iam = Mock()
-        mock_boto_client.return_value = mock_iam
-        mock_iam.get_account_password_policy.return_value = {
-            "PasswordPolicy": {
-                "MinimumPasswordLength": 8,
-                "RequireUppercaseCharacters": True,
-                "RequireLowercaseCharacters": True,
-                "RequireNumbers": True,
-                "RequireSymbols": True,
-            }
-        }
-
-        # Test valid password
-        password = "ValidPass123!"
-        errors = pwd_reset.validate_password_policy(password)
-        self.assertEqual(errors, [])
-
-    @patch("aws_iam_self_service_password_reset.boto3.client")
-    def test_validate_password_policy_failures(self, mock_boto_client):
-        """Test password policy validation failures"""
-        # Mock IAM client and response
-        mock_iam = Mock()
-        mock_boto_client.return_value = mock_iam
-        mock_iam.get_account_password_policy.return_value = {
-            "PasswordPolicy": {
-                "MinimumPasswordLength": 12,
-                "RequireUppercaseCharacters": True,
-                "RequireLowercaseCharacters": True,
-                "RequireNumbers": True,
-                "RequireSymbols": True,
-            }
-        }
-
-        # Test password that's too short
-        password = "Short1!"
-        errors = pwd_reset.validate_password_policy(password)
-        self.assertIn("Password must be at least 12 characters long", errors[0])
-
-        # Test password without uppercase
-        password = "nouppercase123!"
-        errors = pwd_reset.validate_password_policy(password)
-        self.assertIn("Password must contain uppercase letters", errors[0])
-
-
 class TestAWSConnectionValidation(unittest.TestCase):
     """Test AWS connection validation"""
 
@@ -276,7 +162,8 @@ class TestMainFlow(unittest.TestCase):
         return_value="old-password",
     )
     @patch(
-        "aws_iam_self_service_password_reset.passwordgen", return_value="NewPassw0rd!"
+        "aws_iam_self_service_password_reset.generate_temporary_password",
+        return_value="NewPassw0rd!",
     )
     @patch("aws_iam_self_service_password_reset.boto3.client")
     @patch(
@@ -291,7 +178,7 @@ class TestMainFlow(unittest.TestCase):
         mock_validate,
         mock_get_user,
         mock_boto_client,
-        mock_passwordgen,
+        mock_generate_temporary_password,
         mock_getpass,
         mock_display,
         mock_log,
@@ -365,7 +252,10 @@ class TestMainFlow(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open)
     @patch("aws_iam_self_service_password_reset.sys.exit", side_effect=SystemExit)
     @patch("aws_iam_self_service_password_reset.getpass.getpass", return_value="old")
-    @patch("aws_iam_self_service_password_reset.passwordgen", return_value="NewPass!1")
+    @patch(
+        "aws_iam_self_service_password_reset.generate_temporary_password",
+        return_value="NewPass!1",
+    )
     @patch("aws_iam_self_service_password_reset.boto3.client")
     @patch(
         "aws_iam_self_service_password_reset.get_current_user",
@@ -379,7 +269,7 @@ class TestMainFlow(unittest.TestCase):
         mock_validate,
         mock_get_user,
         mock_boto_client,
-        mock_passwordgen,
+        mock_generate_temporary_password,
         mock_getpass,
         mock_exit,
         mock_file,
@@ -404,7 +294,10 @@ class TestMainFlow(unittest.TestCase):
     @patch("builtins.open", new_callable=mock_open)
     @patch("aws_iam_self_service_password_reset.sys.exit", side_effect=SystemExit)
     @patch("aws_iam_self_service_password_reset.getpass.getpass", return_value="old")
-    @patch("aws_iam_self_service_password_reset.passwordgen", return_value="NewPass!1")
+    @patch(
+        "aws_iam_self_service_password_reset.generate_temporary_password",
+        return_value="NewPass!1",
+    )
     @patch("aws_iam_self_service_password_reset.boto3.client")
     @patch(
         "aws_iam_self_service_password_reset.get_current_user",
@@ -418,7 +311,7 @@ class TestMainFlow(unittest.TestCase):
         mock_validate,
         mock_get_user,
         mock_boto_client,
-        mock_passwordgen,
+        mock_generate_temporary_password,
         mock_getpass,
         mock_exit,
         mock_file,
@@ -442,8 +335,6 @@ if __name__ == "__main__":
     suite = unittest.TestSuite()
 
     # Add test cases
-    suite.addTests(loader.loadTestsFromTestCase(TestPasswordGeneration))
-    suite.addTests(loader.loadTestsFromTestCase(TestPasswordPolicyValidation))
     suite.addTests(loader.loadTestsFromTestCase(TestAWSConnectionValidation))
     suite.addTests(loader.loadTestsFromTestCase(TestCurrentUserRetrieval))
     suite.addTests(loader.loadTestsFromTestCase(TestAuditLogging))

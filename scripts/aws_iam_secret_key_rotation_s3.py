@@ -75,45 +75,107 @@ def generate_presigned_url(bucket: str, key: str) -> str:
     )
 
 
+def cleanup_failed_rotation(
+    user_name: str,
+    new_key_id: str | None,
+    bucket_name: str | None,
+    object_key: str | None,
+    disabled_key_ids: list[str],
+) -> None:
+    """Roll back artifacts and key state after a failed rotation."""
+    iam = get_iam_client()
+    s3 = get_s3_client()
+
+    for access_key_id in disabled_key_ids:
+        try:
+            iam.update_access_key(
+                UserName=user_name,
+                AccessKeyId=access_key_id,
+                Status="Active",
+            )
+        except ClientError:
+            _logger.exception(
+                "Failed to reactivate %s for %s", access_key_id, user_name
+            )
+
+    if new_key_id:
+        try:
+            iam.delete_access_key(UserName=user_name, AccessKeyId=new_key_id)
+        except ClientError:
+            _logger.exception("Failed to delete new access key %s", new_key_id)
+
+    if bucket_name and object_key:
+        try:
+            s3.delete_object(Bucket=bucket_name, Key=object_key)
+        except ClientError:
+            _logger.exception(
+                "Failed to delete staged credential object %s", object_key
+            )
+
+    if bucket_name:
+        try:
+            s3.delete_bucket(Bucket=bucket_name)
+        except ClientError:
+            _logger.exception("Failed to delete staging bucket %s", bucket_name)
+
+
 def rotate_and_store_credentials(user_name: str) -> str:
     """Rotate keys for ``user_name`` and return pre-signed download URL."""
     iam = get_iam_client()
+    disabled_key_ids: list[str] = []
+    new_key_id = None
+    bucket_name = None
+    object_key = None
 
-    # List current keys
-    existing = iam.list_access_keys(UserName=user_name)["AccessKeyMetadata"]
+    try:
+        # List current keys
+        existing = iam.list_access_keys(UserName=user_name)["AccessKeyMetadata"]
 
-    # Create new key
-    response = iam.create_access_key(UserName=user_name)
-    new_key = response["AccessKey"]
+        # Create new key
+        response = iam.create_access_key(UserName=user_name)
+        new_key = response["AccessKey"]
+        new_key_id = new_key["AccessKeyId"]
 
-    # Disable old keys
-    for meta in existing:
-        if meta["AccessKeyId"] != new_key["AccessKeyId"]:
+        bucket_name = f"iam-creds-{uuid4().hex}"
+        create_secure_bucket(bucket_name)
+
+        object_key = f"{new_key_id}.json"
+        store_credentials(
+            bucket_name,
+            object_key,
+            {
+                "UserName": user_name,
+                "AccessKeyId": new_key_id,
+                "SecretAccessKey": new_key["SecretAccessKey"],
+                "CreateDate": new_key["CreateDate"].isoformat(),
+            },
+        )
+
+        url = generate_presigned_url(bucket_name, object_key)
+
+        for meta in existing:
+            access_key_id = meta["AccessKeyId"]
+            if access_key_id == new_key_id:
+                continue
             iam.update_access_key(
                 UserName=user_name,
-                AccessKeyId=meta["AccessKeyId"],
+                AccessKeyId=access_key_id,
                 Status="Inactive",
             )
+            disabled_key_ids.append(access_key_id)
 
-    bucket_name = f"iam-creds-{uuid4().hex}"
-    create_secure_bucket(bucket_name)
-
-    object_key = f"{new_key['AccessKeyId']}.json"
-    store_credentials(
-        bucket_name,
-        object_key,
-        {
-            "UserName": user_name,
-            "AccessKeyId": new_key["AccessKeyId"],
-            "SecretAccessKey": new_key["SecretAccessKey"],
-            "CreateDate": new_key["CreateDate"].isoformat(),
-        },
-    )
-
-    url = generate_presigned_url(bucket_name, object_key)
-    _logger.info("Pre-signed URL generated: %s", url)
-    print(url)
-    return url
+        _logger.info("Pre-signed URL generated")
+        print(url)
+        return url
+    except ClientError:
+        cleanup_failed_rotation(
+            user_name,
+            new_key_id=new_key_id,
+            bucket_name=bucket_name,
+            object_key=object_key,
+            disabled_key_ids=disabled_key_ids,
+        )
+        raise
 
 
 if __name__ == "__main__":

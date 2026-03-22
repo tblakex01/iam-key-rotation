@@ -7,53 +7,61 @@ locals {
   # Common tags for all resources - UPDATE WITH YOUR VALUES
   common_tags = {
     Application = "iam-key-rotation"
-    Environment = "dev" 
-    Account     = "your-account-name"    # Match account.hcl account_name
+    Environment = "dev"
+    Account     = "your-account-name" # Match account.hcl account_name
     Region      = "us-east-1"
     ManagedBy   = "terragrunt"
     Repository  = "iam-key-rotation"
     Purpose     = "security-compliance"
   }
-  
+
   # IAM Key Rotation Policy - SAFE TESTING VALUES
-  warning_threshold    = 30     # Days before sending warning (safer for dev/testing)
-  urgent_threshold     = 45     # Days before sending urgent notice (safer for dev/testing) 
-  disable_threshold    = 60     # Days before disabling keys (safer for dev/testing)
-  auto_disable         = false  # Whether to auto-disable expired keys (false = safer for testing)
-  sender_email         = "your-security-team@yourcompany.com"  # UPDATE WITH YOUR EMAIL
-  exemption_tag        = "key-rotation-exempt"
-  schedule_expression  = "rate(6 hours)"  # More frequent for testing (use "rate(1 day)" for prod)
-  alarm_sns_topic      = ""     # Auto-create SNS topic (or specify existing ARN)
-  
+  warning_threshold   = 30    # Days before sending warning (safer for dev/testing)
+  urgent_threshold    = 45    # Days before sending urgent notice (safer for dev/testing)
+  disable_threshold   = 60    # Days before disabling keys (safer for dev/testing)
+  auto_disable        = false # Whether to auto-disable expired keys (false = safer for testing)
+  sender_email        = "your-security-team@yourcompany.com"
+  support_email       = "iam-support@yourcompany.com"
+  exemption_tag       = "key-rotation-exempt"
+  schedule_expression = "rate(6 hours)" # More frequent for testing (use "rate(1 day)" for prod)
+  alarm_sns_topic     = "arn:aws:sns:us-east-1:123456789012:iam-key-rotation-alerts"
+
+  # Optional SES delivery controls for the self-service recovery API
+  ses_configuration_set = null
+
+  # Self-service access-key recovery API limits
+  access_key_recovery_request_cooldown_minutes = 15
+  access_key_recovery_max_requests_per_day     = 5
+
   # New Key Retention Configuration (NEW - Production values: 45/30)
   new_key_retention_days = 45   # Days to keep new credentials in S3 with 7-day reminders (45 = 6 reminders)
   old_key_retention_days = 30   # Days before deleting old IAM key after rotation
-  
-  # Test Users Configuration - UPDATE WITH YOUR EMAIL AND USER NAMES
-  user_info = {
+
+  # Explicit IAM users managed in this environment
+  managed_user_info = {
     "iam-test-user-dev-1" = {
-      email = "your-email@yourcompany.com"  # UPDATE WITH YOUR EMAIL
+      email = "your-email@yourcompany.com" # UPDATE WITH YOUR EMAIL
       user_tags = {
-        "purpose"     = "iam-key-rotation-testing"
-        "created-by"  = "terragrunt"
+        "purpose"    = "iam-key-rotation-testing"
+        "created-by" = "terragrunt"
       }
     }
-    
+
     "iam-test-user-dev-2" = {
-      email = "your-email@yourcompany.com"  # UPDATE WITH YOUR EMAIL
+      email = "your-email@yourcompany.com" # UPDATE WITH YOUR EMAIL
       user_tags = {
-        "purpose"               = "iam-key-rotation-testing"
-        "created-by"           = "terragrunt"
-        "key-rotation-exempt"  = "false"  # Test normal rotation flow
+        "purpose"             = "iam-key-rotation-testing"
+        "created-by"          = "terragrunt"
+        "key-rotation-exempt" = "false" # Test normal rotation flow
       }
     }
-    
+
     "iam-test-exempt-user-dev" = {
-      email = "your-email@yourcompany.com"  # UPDATE WITH YOUR EMAIL
+      email = "your-email@yourcompany.com" # UPDATE WITH YOUR EMAIL
       user_tags = {
-        "purpose"               = "iam-key-rotation-testing"
-        "created-by"           = "terragrunt"
-        "key-rotation-exempt"  = "true"   # Test exemption functionality
+        "purpose"             = "iam-key-rotation-testing"
+        "created-by"          = "terragrunt"
+        "key-rotation-exempt" = "true" # Test exemption functionality
       }
     }
   }
