@@ -12,6 +12,9 @@ DOWNLOADED = "downloaded"
 OLD_KEY_DELETED_PENDING_DOWNLOAD = "old_key_deleted_pending_download"
 COMPLETED = "completed"
 EXPIRED_NO_DOWNLOAD = "expired_no_download"
+ROTATION_SORT_KEY_PREFIX = "ROTATION#"
+RECOVERY_STATE_SORT_KEY = "RECOVERY#STATE"
+EMAIL_LOOKUP_INDEX_NAME = "email-lookup-index"
 
 ACTIVE_ROTATION_STATUSES = (
     PENDING_DOWNLOAD,
@@ -71,11 +74,19 @@ def rotation_partition_key(username: str) -> str:
 
 
 def rotation_sort_key(old_key_id: str) -> str:
-    return f"ROTATION#{old_key_id}"
+    return f"{ROTATION_SORT_KEY_PREFIX}{old_key_id}"
 
 
 def rotation_item_key(username: str, old_key_id: str) -> dict[str, str]:
     return {"PK": rotation_partition_key(username), "SK": rotation_sort_key(old_key_id)}
+
+
+def recovery_state_key(username: str) -> dict[str, str]:
+    return {"PK": rotation_partition_key(username), "SK": RECOVERY_STATE_SORT_KEY}
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
 
 
 def credential_s3_key(username: str, old_key_id: str) -> str:
@@ -120,6 +131,7 @@ def build_rotation_record(
         **rotation_item_key(username, old_key_id),
         "username": username,
         "email": email,
+        "email_lookup": normalize_email(email),
         "old_key_id": old_key_id,
         "new_key_id": new_key_id,
         "rotation_initiated": isoformat(rotation_started_at),

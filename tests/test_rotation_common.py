@@ -13,6 +13,8 @@ from common.rotation_common import (  # noqa: E402
     build_rotation_record,
     credential_s3_key,
     load_runtime_config,
+    normalize_email,
+    recovery_state_key,
     reminder_day_due,
     rotation_item_key,
     utc_now,
@@ -29,6 +31,11 @@ class TestRotationCommon(unittest.TestCase):
         self.assertEqual(
             credential_s3_key("alice", "OLDKEY"), "credentials/alice/OLDKEY.json"
         )
+        self.assertEqual(
+            recovery_state_key("alice"),
+            {"PK": "USER#alice", "SK": "RECOVERY#STATE"},
+        )
+        self.assertEqual(normalize_email(" Alice@Example.COM "), "alice@example.com")
 
     def test_reminder_day_due_on_exact_interval(self):
         started = (utc_now() - timedelta(days=14)).isoformat()
@@ -48,6 +55,7 @@ class TestRotationCommon(unittest.TestCase):
         self.assertEqual(record["status"], PENDING_DOWNLOAD)
         self.assertFalse(record["downloaded"])
         self.assertFalse(record["old_key_deleted"])
+        self.assertEqual(record["email_lookup"], "alice@example.com")
 
     def test_validate_runtime_config_rejects_partial_store_config(self):
         config = load_runtime_config_from_env()

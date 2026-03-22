@@ -10,6 +10,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+from common.email import EmailConfig, send_html_email
 from common.notifications import render_reminder_email
 from common.rotation_common import (
     OLD_KEY_DELETED_PENDING_DOWNLOAD,
@@ -26,7 +27,6 @@ logger.setLevel(logging.INFO)
 
 dynamodb = None
 s3 = None
-ses = None
 
 
 def get_dynamodb_resource():
@@ -41,13 +41,6 @@ def get_s3_client():
     if s3 is None:
         s3 = boto3.client("s3")
     return s3
-
-
-def get_ses_client():
-    global ses
-    if ses is None:
-        ses = boto3.client("ses")
-    return ses
 
 
 def lambda_handler(event, context):  # noqa: ARG001
@@ -156,9 +149,10 @@ def regenerate_url_and_notify(table, config, item: dict, reminder_day: int) -> b
         support_email=config.support_email,
         reminder_day=reminder_day,
     )
-    get_ses_client().send_email(
-        Source=config.sender_email,
-        Destination={"ToAddresses": [item["email"]]},
-        Message={"Subject": {"Data": subject}, "Body": {"Html": {"Data": html}}},
+    send_html_email(
+        config=EmailConfig.load(),
+        to_addresses=[item["email"]],
+        subject=subject,
+        html_body=html,
     )
     return True

@@ -8,6 +8,13 @@
 
 ## Common Incidents
 
+### Self-Service Recovery API Failing
+
+1. Check the API Gateway 4XX/5XX alarms for the recovery API.
+2. Inspect the API access log group and the recovery Lambda log group.
+3. Confirm the Lambda still has S3 read access through both IAM and the credentials bucket policy.
+4. If requests are reaching Lambda but no email is sent, inspect SES send failures and the configured sender/support email values.
+
 ### Lambda Error Alarm
 
 1. Open the alarm and identify the failing function.
@@ -34,10 +41,19 @@
 
 1. Query the DynamoDB record by `PK` / `SK` or by `s3_key`.
 2. Confirm whether the credential object still exists in S3.
-3. If the old key is already deleted and the object still exists, trigger the reminder Lambda or generate a temporary replacement URL manually.
+3. If the object still exists, use the self-service recovery API first or trigger the reminder Lambda.
 4. If the credential object is gone and the record never updated, inspect download-tracker logs and DLQ messages.
 
 ## Manual Recovery
+
+### Self-Service Recovery Request
+
+- Use the HTTP API path `POST /access-key-recovery/request` with exactly one of:
+  - `{"username":"alice"}`
+  - `{"email":"alice@example.com"}`
+- A `202` only means the request was accepted generically. It does not confirm that an email was sent.
+- Recovery is only eligible while the record is still `pending_download` or `old_key_deleted_pending_download` and the S3 object still exists.
+- Downloaded or expired secrets cannot be resurrected through this path.
 
 ### Reissue A Reminder
 
@@ -56,3 +72,4 @@
 - Do not hand-edit DynamoDB unless normal Lambda retries and a rerun cannot reconcile the state.
 - Do not re-enable S3 object versioning on the credentials bucket.
 - Do not add IAM access-key creation back into Terraform.
+- Do not email plaintext access-key material as a fallback.

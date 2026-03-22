@@ -10,6 +10,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+from common.email import EmailConfig, send_html_email
 from common.notifications import (
     render_old_key_deleted_email,
     render_old_key_warning_email,
@@ -32,7 +33,6 @@ logger.setLevel(logging.INFO)
 
 dynamodb = None
 iam = None
-ses = None
 cloudwatch = None
 s3 = None
 
@@ -49,13 +49,6 @@ def get_iam_client():
     if iam is None:
         iam = boto3.client("iam")
     return iam
-
-
-def get_ses_client():
-    global ses
-    if ses is None:
-        ses = boto3.client("ses")
-    return ses
 
 
 def get_cloudwatch_client():
@@ -154,10 +147,11 @@ def send_deletion_warning(table, config, item: dict) -> bool:
             ":one": 1,
         },
     )
-    get_ses_client().send_email(
-        Source=config.sender_email,
-        Destination={"ToAddresses": [item["email"]]},
-        Message={"Subject": {"Data": subject}, "Body": {"Html": {"Data": html}}},
+    send_html_email(
+        config=EmailConfig.load(),
+        to_addresses=[item["email"]],
+        subject=subject,
+        html_body=html,
     )
     return True
 
@@ -218,10 +212,11 @@ def delete_old_key_and_notify(table, config, item: dict) -> bool:
         presigned_url=presigned_url,
         url_expires=url_expires,
     )
-    get_ses_client().send_email(
-        Source=config.sender_email,
-        Destination={"ToAddresses": [item["email"]]},
-        Message={"Subject": {"Data": subject}, "Body": {"Html": {"Data": html}}},
+    send_html_email(
+        config=EmailConfig.load(),
+        to_addresses=[item["email"]],
+        subject=subject,
+        html_body=html,
     )
     return True
 

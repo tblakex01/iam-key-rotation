@@ -42,11 +42,19 @@ The service config must set:
 - `managed_user_info` if the environment should manage IAM users
 - any environment-specific threshold overrides
 
+The service config should also set or review:
+
+- `support_email`
+- `access_key_recovery_request_cooldown_minutes`
+- `access_key_recovery_max_requests_per_day`
+- `ses_configuration_set` if the environment uses one
+
 The Terragrunt service configuration passes:
 
 - `name_prefix = "iam-key-rotation"`
 - `environment_name = <env>`
 - shared Lambda source directory rooted at [`lambda`](/Users/nizda/Dev/cc/iam-key-rotation/lambda)
+- the self-service access-key recovery Lambda source directory rooted at [`lambda`](/Users/nizda/Dev/cc/iam-key-rotation/lambda)
 
 ## Commands
 

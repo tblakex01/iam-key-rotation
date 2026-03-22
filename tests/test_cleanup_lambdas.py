@@ -28,12 +28,12 @@ class TestCleanupLambdas(unittest.TestCase):
         },
     )
     @patch("cleanup.cleanup.cloudwatch")
-    @patch("cleanup.cleanup.ses")
+    @patch("cleanup.cleanup.send_html_email")
     @patch("cleanup.cleanup.s3")
     @patch("cleanup.cleanup.iam")
     @patch("cleanup.cleanup.dynamodb")
     def test_cleanup_deletes_old_key_and_preserves_pending_download(
-        self, mock_dynamodb, mock_iam, mock_s3, mock_ses, mock_cloudwatch
+        self, mock_dynamodb, mock_iam, mock_s3, mock_send_html_email, mock_cloudwatch
     ):
         mock_table = Mock()
         mock_dynamodb.Table.return_value = mock_table
@@ -70,7 +70,7 @@ class TestCleanupLambdas(unittest.TestCase):
         ]
         self.assertEqual(update_values[":status"], "old_key_deleted_pending_download")
         mock_iam.delete_access_key.assert_called_once()
-        mock_ses.send_email.assert_called_once()
+        mock_send_html_email.assert_called_once()
 
     @patch.dict(
         os.environ,
@@ -83,11 +83,11 @@ class TestCleanupLambdas(unittest.TestCase):
         },
     )
     @patch("s3_cleanup.s3_cleanup.cloudwatch")
-    @patch("s3_cleanup.s3_cleanup.ses")
+    @patch("s3_cleanup.s3_cleanup.send_html_email")
     @patch("s3_cleanup.s3_cleanup.s3")
     @patch("s3_cleanup.s3_cleanup.dynamodb")
     def test_s3_cleanup_expires_pending_credentials(
-        self, mock_dynamodb, mock_s3, mock_ses, mock_cloudwatch
+        self, mock_dynamodb, mock_s3, mock_send_html_email, mock_cloudwatch
     ):
         mock_table = Mock()
         mock_dynamodb.Table.return_value = mock_table
@@ -118,7 +118,7 @@ class TestCleanupLambdas(unittest.TestCase):
             "ExpressionAttributeValues"
         ]
         self.assertEqual(update_values[":status"], "expired_no_download")
-        mock_ses.send_email.assert_called_once()
+        mock_send_html_email.assert_called_once()
 
 
 if __name__ == "__main__":

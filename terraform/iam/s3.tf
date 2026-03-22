@@ -258,6 +258,7 @@ resource "aws_s3_bucket_policy" "credentials" {
         Principal = {
           AWS = [
             aws_iam_role.lambda_exec.arn,
+            aws_iam_role.access_key_recovery_exec.arn,
             aws_iam_role.download_tracker_exec.arn,
             aws_iam_role.url_regenerator_exec.arn,
             aws_iam_role.cleanup_exec.arn,
@@ -277,6 +278,7 @@ resource "aws_s3_bucket_policy" "credentials" {
         Principal = {
           AWS = [
             aws_iam_role.lambda_exec.arn,
+            aws_iam_role.access_key_recovery_exec.arn,
             aws_iam_role.download_tracker_exec.arn,
             aws_iam_role.url_regenerator_exec.arn,
             aws_iam_role.cleanup_exec.arn,

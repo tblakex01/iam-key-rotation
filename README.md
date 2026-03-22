@@ -5,8 +5,10 @@ Enterprise AWS IAM access-key rotation with Terragrunt-managed infrastructure, L
 ## What Ships
 
 - Automated access-key rotation for IAM users tagged with `email`.
+- Anonymous self-service recovery for undownloaded rotated credentials through `POST /access-key-recovery/request`.
 - One canonical lifecycle backed by DynamoDB and S3:
   - Day 0: create new key, store encrypted credentials in S3, email a 7-day pre-signed URL.
+  - Any time before expiry: the user can request a fresh SES delivery link if the rotated credential is still pending download and the S3 object still exists.
   - Day 7/14/21/...: reminder Lambda reissues a fresh URL if credentials are still pending download.
   - Day 23: warning that the old key will be deleted in 7 days.
   - Day 30: old key is deleted. If the new credentials are still pending, the user receives an urgent notice.
@@ -22,10 +24,16 @@ Enterprise AWS IAM access-key rotation with Terragrunt-managed infrastructure, L
 
 ```mermaid
 graph TD
+    API["HTTP API"] --> REC["Recovery Request Lambda"]
     EB["EventBridge schedules"] --> ENF["Enforcement Lambda"]
     EB --> REM["Reminder Lambda"]
     EB --> CLN["Old-key cleanup Lambda"]
     EB --> EXP["Credential-expiry Lambda"]
+
+    REC --> IAM
+    REC --> S3
+    REC --> DDB
+    REC --> SES
 
     ENF --> IAM["IAM access keys"]
     ENF --> S3["Encrypted credentials bucket"]
@@ -79,7 +87,9 @@ Every deploy requires explicit environment configuration:
 - `name_prefix` and `environment_name` are part of the Terraform contract.
 - `account_id` and `aws_region` are part of the Terraform contract.
 - `sender_email` must be set.
+- `support_email` should be set for recovery guidance, or it will default to `sender_email`.
 - `alarm_sns_topic` must be set.
+- recovery request rate limits can be overridden per environment.
 - managed IAM users, if any, must be declared explicitly via `managed_user_info`.
 - the module no longer creates default IAM users or Terraform-managed access keys.
 

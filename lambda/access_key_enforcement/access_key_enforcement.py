@@ -14,6 +14,7 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
+from common.email import EmailConfig, send_html_email
 from common.notifications import render_enforcement_email
 from common.rotation_common import (
     ACTIVE_ROTATION_STATUSES,
@@ -32,7 +33,6 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 iam_client = None
-ses_client = None
 cloudwatch = None
 s3_client = None
 dynamodb = None
@@ -48,13 +48,6 @@ def get_iam_client():
     if iam_client is None:
         iam_client = boto3.client("iam")
     return iam_client
-
-
-def get_ses_client():
-    global ses_client
-    if ses_client is None:
-        ses_client = boto3.client("ses")
-    return ses_client
 
 
 def get_cloudwatch_client():
@@ -395,15 +388,13 @@ def send_notification(notification: dict[str, Any]) -> None:
     config = load_runtime_config()
     subject, html_body = render_enforcement_email(notification, config)
     try:
-        get_ses_client().send_email(
-            Source=config.sender_email,
-            Destination={"ToAddresses": [notification["email"]]},
-            Message={
-                "Subject": {"Data": subject},
-                "Body": {"Html": {"Data": html_body}},
-            },
+        send_html_email(
+            config=EmailConfig.load(),
+            to_addresses=[notification["email"]],
+            subject=subject,
+            html_body=html_body,
         )
-    except ClientError:
+    except RuntimeError:
         logger.exception("Failed to send notification to %s", notification["email"])
 
 

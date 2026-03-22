@@ -17,29 +17,28 @@ from moto import mock_aws
 def password_notification_module() -> Iterator[object]:
     """Load the Lambda module with moto-backed boto3 clients."""
 
-    module_path = (
-        Path(__file__).resolve().parent.parent / "lambda" / "password_notification"
-    )
+    lambda_root = Path(__file__).resolve().parent.parent / "lambda"
+    module_path = lambda_root / "password_notification"
+    sys.path.insert(0, str(lambda_root))
     sys.path.insert(0, str(module_path))
 
     with mock_aws():
         os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
         os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
         os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
+        os.environ["SENDER_EMAIL"] = "cloud-admins@example.com"
+        os.environ["SUPPORT_EMAIL"] = "support@example.com"
 
         module = importlib.import_module("password_notification")
         module = importlib.reload(module)
 
         # Replace the global clients with moto-backed instances for deterministic tests
         module.iam_client = boto3.client("iam", region_name="us-east-1")
-        module.ses_client = boto3.client("ses", region_name="us-east-1")
-        module.ses_client.verify_email_identity(
-            EmailAddress="cloud-admins@jennasrunbooks.com"
-        )
 
         try:
             yield module
         finally:
+            sys.path.remove(str(lambda_root))
             sys.path.remove(str(module_path))
             sys.modules.pop("password_notification", None)
 
@@ -96,20 +95,19 @@ def test_lambda_sends_notifications_for_expiring_passwords(
         mp.setattr(module.iam_client, "get_credential_report", lambda: responses.pop(0))
 
         with pytest.MonkeyPatch.context() as nested_mp:
-            original_send = module.ses_client.send_email
             send_calls = []
 
             def _send_email(**kwargs):
                 send_calls.append(kwargs)
-                return original_send(**kwargs)
+                return {"MessageId": "test-message-id"}
 
-            nested_mp.setattr(module.ses_client, "send_email", _send_email)
+            nested_mp.setattr(module, "send_html_email", _send_email)
 
             result = module.lambda_handler({}, None)
 
     assert result == "Password expiry notifications sent."
     assert len(send_calls) == 1
-    assert send_calls[0]["Destination"]["ToAddresses"] == ["alice@example.com"]
+    assert send_calls[0]["to_addresses"] == ["alice@example.com"]
 
 
 def test_lambda_skips_users_without_emails(password_notification_module):
@@ -130,8 +128,8 @@ def test_lambda_skips_users_without_emails(password_notification_module):
 
         with pytest.MonkeyPatch.context() as nested_mp:
             nested_mp.setattr(
-                module.ses_client,
-                "send_email",
+                module,
+                "send_html_email",
                 lambda **_: pytest.fail("Email should not be sent"),
             )
 

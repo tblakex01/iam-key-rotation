@@ -26,10 +26,12 @@ class TestUrlRegenerator(unittest.TestCase):
             "OLD_KEY_RETENTION_DAYS": "30",
         },
     )
-    @patch("url_regenerator.url_regenerator.ses")
+    @patch("url_regenerator.url_regenerator.send_html_email")
     @patch("url_regenerator.url_regenerator.s3")
     @patch("url_regenerator.url_regenerator.dynamodb")
-    def test_sends_due_reminder_once(self, mock_dynamodb, mock_s3, mock_ses):
+    def test_sends_due_reminder_once(
+        self, mock_dynamodb, mock_s3, mock_send_html_email
+    ):
         mock_table = Mock()
         mock_dynamodb.Table.return_value = mock_table
         mock_table.query.side_effect = [
@@ -57,7 +59,7 @@ class TestUrlRegenerator(unittest.TestCase):
         self.assertEqual(result["statusCode"], 200)
         self.assertEqual(json.loads(result["body"])["reminded"], 1)
         mock_table.update_item.assert_called_once()
-        mock_ses.send_email.assert_called_once()
+        mock_send_html_email.assert_called_once()
 
 
 if __name__ == "__main__":

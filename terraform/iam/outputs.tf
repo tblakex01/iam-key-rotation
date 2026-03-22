@@ -9,6 +9,26 @@ output "lambda_function_name" {
   value       = aws_lambda_function.access_key_enforcement.function_name
 }
 
+output "access_key_recovery_function_arn" {
+  description = "ARN of the self-service access-key recovery request Lambda function"
+  value       = aws_lambda_function.access_key_recovery_request.arn
+}
+
+output "access_key_recovery_function_name" {
+  description = "Name of the self-service access-key recovery request Lambda function"
+  value       = aws_lambda_function.access_key_recovery_request.function_name
+}
+
+output "access_key_recovery_api_endpoint" {
+  description = "Invoke URL for the self-service access-key recovery HTTP API stage"
+  value       = aws_apigatewayv2_stage.access_key_recovery.invoke_url
+}
+
+output "access_key_recovery_api_id" {
+  description = "API Gateway HTTP API ID for the self-service access-key recovery endpoint"
+  value       = aws_apigatewayv2_api.access_key_recovery.id
+}
+
 output "lambda_log_group" {
   description = "CloudWatch log group for the Lambda function"
   value       = aws_cloudwatch_log_group.lambda_logs.name
@@ -54,12 +74,15 @@ output "iam_users" {
 output "configuration_summary" {
   description = "Summary of Lambda configuration"
   value = {
-    warning_threshold = var.warning_threshold
-    urgent_threshold  = var.urgent_threshold
-    disable_threshold = var.disable_threshold
-    auto_disable      = var.auto_disable
-    sender_email      = var.sender_email
-    schedule          = var.schedule_expression
+    warning_threshold                         = var.warning_threshold
+    urgent_threshold                          = var.urgent_threshold
+    disable_threshold                         = var.disable_threshold
+    auto_disable                              = var.auto_disable
+    sender_email                              = var.sender_email
+    support_email                             = coalesce(var.support_email, var.sender_email)
+    schedule                                  = var.schedule_expression
+    access_key_recovery_request_cooldown_mins = var.access_key_recovery_request_cooldown_minutes
+    access_key_recovery_max_requests_per_day  = var.access_key_recovery_max_requests_per_day
   }
 }
 
@@ -115,17 +138,19 @@ output "cleanup_function_arn" {
 output "key_rotation_system_summary" {
   description = "Complete summary of the automated key rotation system"
   value = {
-    resource_prefix        = local.resource_prefix
-    environment_name       = var.environment_name
-    enforcement_lambda     = aws_lambda_function.access_key_enforcement.function_name
-    download_tracker       = aws_lambda_function.download_tracker.function_name
-    url_regenerator        = aws_lambda_function.url_regenerator.function_name
-    cleanup_lambda         = aws_lambda_function.cleanup.function_name
-    s3_cleanup_lambda      = aws_lambda_function.s3_cleanup.function_name
-    credentials_bucket     = aws_s3_bucket.credentials.id
-    tracking_table         = aws_dynamodb_table.key_rotation_tracking.name
-    new_key_retention_days = var.new_key_retention_days
-    old_key_retention_days = var.old_key_retention_days
-    sender_email           = var.sender_email
+    resource_prefix         = local.resource_prefix
+    environment_name        = var.environment_name
+    enforcement_lambda      = aws_lambda_function.access_key_enforcement.function_name
+    access_key_recovery     = aws_lambda_function.access_key_recovery_request.function_name
+    access_key_recovery_api = aws_apigatewayv2_stage.access_key_recovery.invoke_url
+    download_tracker        = aws_lambda_function.download_tracker.function_name
+    url_regenerator         = aws_lambda_function.url_regenerator.function_name
+    cleanup_lambda          = aws_lambda_function.cleanup.function_name
+    s3_cleanup_lambda       = aws_lambda_function.s3_cleanup.function_name
+    credentials_bucket      = aws_s3_bucket.credentials.id
+    tracking_table          = aws_dynamodb_table.key_rotation_tracking.name
+    new_key_retention_days  = var.new_key_retention_days
+    old_key_retention_days  = var.old_key_retention_days
+    sender_email            = var.sender_email
   }
 }

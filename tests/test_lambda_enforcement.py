@@ -36,9 +36,11 @@ class TestLambdaHandler(unittest.TestCase):
         },
     )
     @patch("access_key_enforcement.access_key_enforcement.iam_client")
-    @patch("access_key_enforcement.access_key_enforcement.ses_client")
+    @patch("access_key_enforcement.access_key_enforcement.send_html_email")
     @patch("access_key_enforcement.access_key_enforcement.cloudwatch")
-    def test_lambda_handler_success(self, mock_cloudwatch, mock_ses, mock_iam):
+    def test_lambda_handler_success(
+        self, mock_cloudwatch, mock_send_html_email, mock_iam
+    ):
         """Test successful Lambda execution"""
         # Mock credential report generation
         mock_iam.generate_credential_report.return_value = {}
@@ -66,9 +68,6 @@ class TestLambdaHandler(unittest.TestCase):
         mock_iam.list_access_keys.return_value = {
             "AccessKeyMetadata": [{"AccessKeyId": "AKIAEXAMPLE123456789"}]
         }
-
-        # Mock successful SES send
-        mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
 
         # Mock CloudWatch put_metric_data
         mock_cloudwatch.put_metric_data.return_value = {}
@@ -133,13 +132,13 @@ class TestLambdaHandler(unittest.TestCase):
         },
     )
     @patch("access_key_enforcement.access_key_enforcement.iam_client")
-    @patch("access_key_enforcement.access_key_enforcement.ses_client")
+    @patch("access_key_enforcement.access_key_enforcement.send_html_email")
     @patch("access_key_enforcement.access_key_enforcement.cloudwatch")
     @patch(
         "access_key_enforcement.access_key_enforcement.time.sleep"
     )  # Mock sleep to speed up test
     def test_lambda_handler_credential_report_retry_success(
-        self, mock_sleep, mock_cloudwatch, mock_ses, mock_iam
+        self, mock_sleep, mock_cloudwatch, mock_send_html_email, mock_iam
     ):
         """Test Lambda execution when credential report succeeds after retries"""
         # Mock credential report generation
@@ -436,11 +435,9 @@ class TestNotificationSending(unittest.TestCase):
     """Test notification sending functionality"""
 
     @patch.dict(os.environ, {"SENDER_EMAIL": "test@example.com"})
-    @patch("access_key_enforcement.access_key_enforcement.ses_client")
-    def test_send_notification_warning(self, mock_ses):
+    @patch("access_key_enforcement.access_key_enforcement.send_html_email")
+    def test_send_notification_warning(self, mock_send_html_email):
         """Test sending warning notification"""
-        mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
-
         notification = {
             "username": "testuser",
             "email": "test@example.com",
@@ -452,20 +449,15 @@ class TestNotificationSending(unittest.TestCase):
 
         access_key_enforcement.send_notification(notification)
 
-        # Verify SES call was made
-        mock_ses.send_email.assert_called_once()
-
-        # Verify email content
-        call_args = mock_ses.send_email.call_args
-        self.assertIn("test@example.com", call_args[1]["Destination"]["ToAddresses"])
-        self.assertIn("Warning", call_args[1]["Message"]["Subject"]["Data"])
+        mock_send_html_email.assert_called_once()
+        call_args = mock_send_html_email.call_args.kwargs
+        self.assertEqual(call_args["to_addresses"], ["test@example.com"])
+        self.assertIn("Warning", call_args["subject"])
 
     @patch.dict(os.environ, {"SENDER_EMAIL": "test@example.com"})
-    @patch("access_key_enforcement.access_key_enforcement.ses_client")
-    def test_send_notification_disabled(self, mock_ses):
+    @patch("access_key_enforcement.access_key_enforcement.send_html_email")
+    def test_send_notification_disabled(self, mock_send_html_email):
         """Test sending disabled notification"""
-        mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
-
         notification = {
             "username": "testuser",
             "email": "test@example.com",
@@ -477,12 +469,9 @@ class TestNotificationSending(unittest.TestCase):
 
         access_key_enforcement.send_notification(notification)
 
-        # Verify SES call was made
-        mock_ses.send_email.assert_called_once()
-
-        # Verify email content
-        call_args = mock_ses.send_email.call_args
-        self.assertIn("Critical", call_args[1]["Message"]["Subject"]["Data"])
+        mock_send_html_email.assert_called_once()
+        call_args = mock_send_html_email.call_args.kwargs
+        self.assertIn("Critical", call_args["subject"])
 
     @patch.dict(
         os.environ,
@@ -491,11 +480,9 @@ class TestNotificationSending(unittest.TestCase):
             "OLD_KEY_RETENTION_DAYS": "30",
         },
     )
-    @patch("access_key_enforcement.access_key_enforcement.ses_client")
-    def test_send_notification_rotated(self, mock_ses):
+    @patch("access_key_enforcement.access_key_enforcement.send_html_email")
+    def test_send_notification_rotated(self, mock_send_html_email):
         """Test sending rotated notification with a one-time download link."""
-        mock_ses.send_email.return_value = {"MessageId": "test-message-id"}
-
         notification = {
             "username": "testuser",
             "email": "test@example.com",
@@ -510,12 +497,9 @@ class TestNotificationSending(unittest.TestCase):
 
         access_key_enforcement.send_notification(notification)
 
-        call_args = mock_ses.send_email.call_args
-        self.assertIn("Action Required", call_args[1]["Message"]["Subject"]["Data"])
-        self.assertIn(
-            "https://example.com/download",
-            call_args[1]["Message"]["Body"]["Html"]["Data"],
-        )
+        call_args = mock_send_html_email.call_args.kwargs
+        self.assertIn("Action Required", call_args["subject"])
+        self.assertIn("https://example.com/download", call_args["html_body"])
 
 
 class TestAutomatedRotation(unittest.TestCase):

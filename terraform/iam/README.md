@@ -4,11 +4,13 @@ This module implements the IAM key-rotation platform. It is intended to be consu
 
 ## What The Module Creates
 
-- five Lambda functions for enforcement, download tracking, reminders, old-key cleanup, and credential expiry
+- six Lambda functions for enforcement, self-service access-key recovery, download tracking, reminders, old-key cleanup, and credential expiry
 - an encrypted S3 bucket for temporary credential delivery
 - a DynamoDB tracking table with:
   - `status-index`
   - `s3-key-index`
+  - `email-lookup-index`
+- an HTTP API for `POST /access-key-recovery/request`
 - EventBridge schedules and CloudTrail data-event wiring
 - CloudWatch alarms, dashboard, and Lambda async failure DLQ
 - optional explicitly managed IAM users
@@ -22,7 +24,7 @@ This module implements the IAM key-rotation platform. It is intended to be consu
 - `sender_email`
 - `alarm_sns_topic`
 
-Everything else is either environment tuning or an explicit opt-in, including `managed_user_info`.
+Everything else is either environment tuning or an explicit opt-in, including `managed_user_info`, `support_email`, and the access-key recovery rate limits.
 
 ## Notable Guarantees
 
@@ -30,6 +32,7 @@ Everything else is either environment tuning or an explicit opt-in, including `m
 - no Terraform-managed IAM access keys
 - no access-key secrets in outputs
 - no stored live pre-signed URLs in DynamoDB
+- no second secret store for access-key recovery
 - environment-scoped resource names
 
 ## Example
@@ -67,6 +70,7 @@ module "iam_key_rotation" {
 Key outputs include:
 
 - enforcement and supporting Lambda ARNs
+- the access-key recovery API invoke URL
 - bucket and table names
 - operations dashboard name
 - Lambda failure DLQ name

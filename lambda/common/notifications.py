@@ -178,3 +178,39 @@ def render_credentials_expired_email(
 <p>Contact <a href="mailto:{support_email}">{support_email}</a> for manual recovery.</p>
 </div></body></html>"""
     return subject, html
+
+
+def render_self_service_reissue_email(
+    *,
+    username: str,
+    old_key_id: str,
+    presigned_url: str,
+    url_expires: str,
+    old_key_deleted: bool,
+    support_email: str,
+) -> tuple[str, str]:
+    status_line = (
+        "Your old key has already been deleted. Download your rotated credentials immediately."
+        if old_key_deleted
+        else "Your rotated credentials are still pending download. This link expires soon."
+    )
+    subject = "[AWS-IAM-CREDS] Self-Service Reissue: Download Your Rotated Credentials"
+    html = f"""<!DOCTYPE html>
+<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+<h2 style="color: #232f3e;">Rotated Credentials Reissued</h2>
+<p>Hello <strong>{username}</strong>,</p>
+<p>{status_line}</p>
+<div style="background-color: #e8f4ff; border-left: 4px solid #1f6feb; padding: 15px; margin: 20px 0;">
+<p style="margin: 0;"><strong>Old Key ID:</strong> <code>{old_key_id}</code></p>
+<p style="margin: 5px 0;"><strong>Link Expires:</strong> {url_expires}</p>
+</div>
+<div style="text-align: center; margin: 30px 0;">
+<a href="{presigned_url}" style="background-color: #1f6feb; color: white; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+Download Credentials
+</a>
+</div>
+<p>This link is one-time credential delivery for your existing rotated secret. If the credentials have already been downloaded or expired, they cannot be recovered automatically.</p>
+<p>Need help? Contact <a href="mailto:{support_email}">{support_email}</a>.</p>
+</div></body></html>"""
+    return subject, html

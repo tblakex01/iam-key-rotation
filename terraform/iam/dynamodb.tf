@@ -36,6 +36,11 @@ resource "aws_dynamodb_table" "key_rotation_tracking" {
     type = "S"
   }
 
+  attribute {
+    name = "email_lookup"
+    type = "S"
+  }
+
   # Global Secondary Index: Query by status
   global_secondary_index {
     name            = "status-index"
@@ -48,6 +53,14 @@ resource "aws_dynamodb_table" "key_rotation_tracking" {
   global_secondary_index {
     name            = "s3-key-index"
     hash_key        = "s3_key"
+    projection_type = "ALL"
+  }
+
+  # Global Secondary Index: Query rotations by normalized email address
+  global_secondary_index {
+    name            = "email-lookup-index"
+    hash_key        = "email_lookup"
+    range_key       = "rotation_initiated"
     projection_type = "ALL"
   }
 

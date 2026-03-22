@@ -26,7 +26,9 @@ Update:
 - `account_id`
 - `profile`
 - `sender_email`
+- `support_email`
 - `alarm_sns_topic`
+- self-service recovery rate limits if the environment needs non-default values
 - `managed_user_info`
 - threshold values if the environment differs from the defaults
 
@@ -42,6 +44,7 @@ terragrunt plan
 Review the plan for:
 
 - environment-specific resource names using `${name_prefix}-${environment_name}`
+- the HTTP API, stage, and recovery Lambda resources for `POST /access-key-recovery/request`
 - CloudWatch alarms routed to the configured SNS topic
 - the Lambda failure DLQ and dashboard resources
 - only the intended IAM users under `managed_user_info`
@@ -66,6 +69,7 @@ Confirm:
 
 - the dashboard exists
 - all Lambda log groups are present
+- the access-key recovery API invoke URL is present in `terragrunt output`
 - alarms target the configured SNS topic
 - the DLQ is empty
 - the DynamoDB table and credentials bucket names are environment-scoped
@@ -77,6 +81,7 @@ Confirm:
 - Use a test-only `managed_user_info` set.
 - Keep `auto_disable = false`.
 - Trigger Lambdas manually and validate email delivery plus download tracking.
+- Exercise the self-service recovery path against a pending-download test record and confirm the first successful download still deletes the S3 object.
 
 ### Non-Prod
 

@@ -79,6 +79,41 @@ class TestRotateAndStoreCredentials(unittest.TestCase):
             self.assertTrue(buckets)
             self.assertTrue(url.startswith("https://"))
 
+    @patch("aws_iam_secret_key_rotation_s3.uuid4")
+    @patch("aws_iam_secret_key_rotation_s3.get_s3_client")
+    @patch("aws_iam_secret_key_rotation_s3.get_iam_client")
+    def test_rolls_back_new_key_when_storage_fails(
+        self, mock_iam_client, mock_s3_client, mock_uuid
+    ):
+        iam = Mock()
+        s3 = Mock()
+        mock_iam_client.return_value = iam
+        mock_s3_client.return_value = s3
+        mock_uuid.return_value.hex = "abc123"
+
+        iam.list_access_keys.return_value = {
+            "AccessKeyMetadata": [{"AccessKeyId": "OLD"}]
+        }
+        iam.create_access_key.return_value = {
+            "AccessKey": {
+                "AccessKeyId": "NEW",
+                "SecretAccessKey": "SECRET",
+                "CreateDate": datetime(2024, 1, 1),
+            }
+        }
+        s3.put_object.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+            "PutObject",
+        )
+
+        with self.assertRaises(ClientError):
+            rotate.rotate_and_store_credentials("test")
+
+        iam.update_access_key.assert_not_called()
+        iam.delete_access_key.assert_called_once_with(
+            UserName="test", AccessKeyId="NEW"
+        )
+
     def test_cli_invocation_executes_rotation(self):
         script = (
             Path(__file__).resolve().parents[1]

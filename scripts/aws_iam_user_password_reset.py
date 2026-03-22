@@ -8,11 +8,16 @@ To be run by an AWS user w/ User Admin privileges
 """
 
 import argparse
-import secrets
-import string
 import sys
+from pathlib import Path
+
 import boto3
 from botocore.exceptions import ClientError
+
+SCRIPT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SCRIPT_ROOT / "lambda"))
+
+from common.iam_passwords import generate_temporary_password  # noqa: E402
 
 
 def get_iam_client(profile=None, region=None):
@@ -40,38 +45,6 @@ def get_iam_client(profile=None, region=None):
         client_kwargs["region_name"] = region
 
     return session.client("iam", **client_kwargs)
-
-
-def passwordgen():
-    """
-    Generate temporary strict password that meets AWS password policy requirements
-    """
-    # Define character classes
-    uppercase = string.ascii_uppercase
-    lowercase = string.ascii_lowercase
-    digits = string.digits
-    special_chars = string.punctuation
-
-    # Password length
-    pwd_length = 20
-
-    # Ensure at least one character from each required class
-    password = [
-        secrets.choice(uppercase),
-        secrets.choice(lowercase),
-        secrets.choice(digits),
-        secrets.choice(special_chars),
-    ]
-
-    # Fill the rest of the password
-    alphabet = uppercase + lowercase + digits + special_chars
-    for _ in range(pwd_length - 4):
-        password.append(secrets.choice(alphabet))
-
-    # Shuffle to avoid predictable character positions
-    secrets.SystemRandom().shuffle(password)
-
-    return "".join(password)
 
 
 def parse_args():
@@ -134,7 +107,7 @@ def main():
             sys.exit(1)
 
     elif args.command == "reset":
-        pwd = passwordgen()
+        pwd = generate_temporary_password(client)
         try:
             # First check if user exists
             client.get_user(UserName=args.username)
@@ -184,7 +157,7 @@ def main():
             sys.exit(1)
 
     elif args.command == "profile":
-        pwd = passwordgen()
+        pwd = generate_temporary_password(client)
         try:
             # First check if user exists
             client.get_user(UserName=args.username)

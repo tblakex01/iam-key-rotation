@@ -1,6 +1,7 @@
 locals {
   lambda_monitor_targets = {
     enforcement = aws_lambda_function.access_key_enforcement.function_name
+    recovery    = aws_lambda_function.access_key_recovery_request.function_name
     download    = aws_lambda_function.download_tracker.function_name
     reminder    = aws_lambda_function.url_regenerator.function_name
     cleanup     = aws_lambda_function.cleanup.function_name
@@ -39,6 +40,7 @@ resource "aws_sqs_queue_policy" "lambda_failures" {
 resource "aws_lambda_function_event_invoke_config" "async_destinations" {
   for_each = {
     enforcement = aws_lambda_function.access_key_enforcement.function_name
+    recovery    = aws_lambda_function.access_key_recovery_request.function_name
     download    = aws_lambda_function.download_tracker.function_name
     reminder    = aws_lambda_function.url_regenerator.function_name
     cleanup     = aws_lambda_function.cleanup.function_name

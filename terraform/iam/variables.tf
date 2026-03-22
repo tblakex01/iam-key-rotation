@@ -145,6 +145,12 @@ variable "s3_cleanup_source_dir" {
   default     = "../../lambda"
 }
 
+variable "access_key_recovery_source_dir" {
+  description = "Source directory for the shared Lambda package."
+  type        = string
+  default     = "../../lambda"
+}
+
 variable "new_key_retention_days" {
   description = "Number of days to retain new key credentials in S3."
   type        = number
@@ -155,4 +161,87 @@ variable "old_key_retention_days" {
   description = "Number of days before deleting the old IAM access key after rotation."
   type        = number
   default     = 30
+}
+
+variable "support_email" {
+  description = "Optional support contact shown in credential recovery emails. Defaults to sender_email."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.support_email == null || can(
+      regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.support_email)
+    )
+    error_message = "support_email must be null or a valid email address."
+  }
+}
+
+variable "ses_region" {
+  description = "Optional SES region override for email sending."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "ses_configuration_set" {
+  description = "Optional SES configuration set name for notification delivery."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "access_key_recovery_request_cooldown_minutes" {
+  description = "Cooldown between successful self-service access-key recovery emails for a user."
+  type        = number
+  default     = 15
+
+  validation {
+    condition     = var.access_key_recovery_request_cooldown_minutes >= 0
+    error_message = "access_key_recovery_request_cooldown_minutes must be greater than or equal to 0."
+  }
+}
+
+variable "access_key_recovery_max_requests_per_day" {
+  description = "Maximum successful self-service access-key recovery emails allowed per user in a rolling 24-hour window."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.access_key_recovery_max_requests_per_day >= 0
+    error_message = "access_key_recovery_max_requests_per_day must be greater than or equal to 0."
+  }
+}
+
+variable "access_key_recovery_stage_name" {
+  description = "Stage name for the HTTP API serving self-service access-key recovery requests."
+  type        = string
+  default     = "$default"
+
+  validation {
+    condition     = trimspace(var.access_key_recovery_stage_name) != ""
+    error_message = "access_key_recovery_stage_name must not be empty."
+  }
+}
+
+variable "access_key_recovery_api_rate_limit" {
+  description = "Steady-state request rate limit per second for the self-service access-key recovery API."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.access_key_recovery_api_rate_limit > 0
+    error_message = "access_key_recovery_api_rate_limit must be greater than 0."
+  }
+}
+
+variable "access_key_recovery_api_burst_limit" {
+  description = "Burst request limit for the self-service access-key recovery API."
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.access_key_recovery_api_burst_limit > 0
+    error_message = "access_key_recovery_api_burst_limit must be greater than 0."
+  }
 }
