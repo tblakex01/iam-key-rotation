@@ -23,6 +23,8 @@ resource "aws_iam_role" "url_regenerator_exec" {
 }
 
 # IAM policy for URL regenerator Lambda
+#checkov:skip=CKV_AWS_355:SES delivery is constrained by sender identity and X-Ray telemetry APIs do not support resource scoping.
+#checkov:skip=CKV_AWS_290:X-Ray telemetry APIs require wildcard resources; SES delivery is constrained by sender identity.
 resource "aws_iam_role_policy" "url_regenerator_policy" {
   name = "${local.url_regenerator_name}-policy"
   role = aws_iam_role.url_regenerator_exec.id
@@ -67,6 +69,11 @@ resource "aws_iam_role_policy" "url_regenerator_policy" {
           "ses:SendEmail"
         ]
         Resource = "*"
+        Condition = {
+          StringEquals = {
+            "ses:FromAddress" = var.sender_email
+          }
+        }
       },
       {
         Effect = "Allow"

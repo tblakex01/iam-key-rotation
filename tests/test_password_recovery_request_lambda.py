@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
 import unittest
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import ANY, Mock, patch
 
 from boto3.dynamodb.conditions import And, BeginsWith, Equals
 from botocore.exceptions import ClientError
@@ -169,6 +170,16 @@ class FakeS3Client:
             }
         )
         return f"https://example.com/download/{Params['Key']}"
+
+
+class PaginatedQueryTable:
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.calls = []
+
+    def query(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.pages.pop(0)
 
 
 BASE_ENV = {
@@ -525,6 +536,265 @@ class TestAccessKeyRecoveryRequest(unittest.TestCase):
 
         self.assertEqual(result["statusCode"], 202)
         mock_send_html_email.assert_not_called()
+
+
+class TestAccessKeyRecoveryRequestHelpers(unittest.TestCase):
+    def test_parse_request_payload_handles_missing_invalid_and_dict_bodies(self):
+        self.assertIsNone(password_recovery_request.parse_request_payload({}))
+        self.assertIsNone(
+            password_recovery_request.parse_request_payload(
+                {
+                    "body": base64.b64encode(b"\xff").decode("utf-8"),
+                    "isBase64Encoded": True,
+                }
+            )
+        )
+        self.assertEqual(
+            password_recovery_request.parse_request_payload(
+                {"body": {"username": "alice"}}
+            ),
+            {"username": "alice"},
+        )
+        self.assertIsNone(
+            password_recovery_request.parse_request_payload({"body": "not-json"})
+        )
+
+    def test_validate_identifier_payload_rejects_invalid_combinations(self):
+        self.assertIsNone(
+            password_recovery_request.validate_identifier_payload(
+                {"username": "alice", "email": "alice@example.com"}
+            )
+        )
+        self.assertEqual(
+            password_recovery_request.validate_identifier_payload(
+                {"username": " alice "}
+            ),
+            {"username": "alice"},
+        )
+        self.assertIsNone(
+            password_recovery_request.validate_identifier_payload({"email": "invalid"})
+        )
+
+    def test_resolve_user_by_username_returns_none_when_email_missing(self):
+        password_recovery_request.iam = FakeIAMClient(
+            users={"alice"}, tags={"alice": []}
+        )
+        self.assertIsNone(password_recovery_request.resolve_user_by_username("alice"))
+
+    def test_resolve_user_by_username_returns_none_for_missing_user(self):
+        password_recovery_request.iam = FakeIAMClient(users=set(), tags={})
+        self.assertIsNone(password_recovery_request.resolve_user_by_username("alice"))
+
+    def test_resolve_user_by_username_reraises_unexpected_iam_errors(self):
+        password_recovery_request.iam = Mock()
+        password_recovery_request.iam.get_user.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied"}},
+            "GetUser",
+        )
+
+        with self.assertRaises(ClientError):
+            password_recovery_request.resolve_user_by_username("alice")
+
+    @patch(
+        "password_recovery_request.password_recovery_request.legacy_recoverable_items_for_email"
+    )
+    @patch("password_recovery_request.password_recovery_request.query_all_items")
+    def test_list_rotation_items_by_email_falls_back_when_index_unavailable(
+        self, mock_query_all_items, mock_legacy_lookup
+    ):
+        mock_query_all_items.side_effect = ClientError(
+            {"Error": {"Code": "ResourceNotFoundException"}},
+            "Query",
+        )
+        mock_legacy_lookup.return_value = [{"username": "alice"}]
+
+        result = password_recovery_request.list_rotation_items_by_email(
+            FakeTable(), "alice@example.com"
+        )
+
+        self.assertEqual(result, [{"username": "alice"}])
+        mock_legacy_lookup.assert_called_once_with(ANY, "alice@example.com")
+
+    def test_query_all_items_handles_pagination(self):
+        table = PaginatedQueryTable(
+            [
+                {"Items": [{"PK": "one"}], "LastEvaluatedKey": {"PK": "one"}},
+                {"Items": [{"PK": "two"}]},
+            ]
+        )
+
+        result = password_recovery_request.query_all_items(
+            table, {"IndexName": "status-index"}
+        )
+
+        self.assertEqual(result, [{"PK": "one"}, {"PK": "two"}])
+        self.assertIn("ExclusiveStartKey", table.calls[1])
+
+    @patch(
+        "password_recovery_request.password_recovery_request.find_latest_recoverable_rotation"
+    )
+    @patch(
+        "password_recovery_request.password_recovery_request.list_rotation_items_by_email"
+    )
+    def test_resolve_user_by_email_returns_none_when_no_latest_rotation(
+        self, mock_list_items, mock_find_latest
+    ):
+        mock_list_items.return_value = [
+            {"username": "alice", "status": "pending_download", "s3_key": "key"}
+        ]
+        mock_find_latest.return_value = None
+
+        self.assertIsNone(
+            password_recovery_request.resolve_user_by_email(
+                FakeTable(), "alice@example.com"
+            )
+        )
+
+    def test_resolve_user_by_email_returns_none_when_current_user_is_missing(self):
+        table = FakeTable([build_rotation_item(email="alice@example.com")])
+        password_recovery_request.iam = FakeIAMClient(users=set(), tags={})
+
+        self.assertIsNone(
+            password_recovery_request.resolve_user_by_email(table, "alice@example.com")
+        )
+
+    def test_get_user_email_returns_none_when_tag_lookup_fails(self):
+        password_recovery_request.iam = Mock()
+        password_recovery_request.iam.list_user_tags.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied"}},
+            "ListUserTags",
+        )
+
+        self.assertIsNone(password_recovery_request.get_user_email("alice"))
+
+    def test_list_user_rotation_items_handles_pagination(self):
+        table = PaginatedQueryTable(
+            [
+                {
+                    "Items": [{"PK": "USER#alice", "SK": "ROTATION#one"}],
+                    "LastEvaluatedKey": {"PK": "USER#alice", "SK": "ROTATION#one"},
+                },
+                {"Items": [{"PK": "USER#alice", "SK": "ROTATION#two"}]},
+            ]
+        )
+
+        result = password_recovery_request.list_user_rotation_items(table, "alice")
+
+        self.assertEqual(len(result), 2)
+        self.assertIn("ExclusiveStartKey", table.calls[1])
+
+    @patch("password_recovery_request.password_recovery_request.query_all_items")
+    def test_list_rotation_items_by_email_reraises_unexpected_query_errors(
+        self, mock_query_all_items
+    ):
+        mock_query_all_items.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied"}},
+            "Query",
+        )
+
+        with self.assertRaises(ClientError):
+            password_recovery_request.list_rotation_items_by_email(
+                FakeTable(), "alice@example.com"
+            )
+
+    def test_parse_rotation_time_defaults_to_epoch_for_missing_values(self):
+        self.assertEqual(
+            password_recovery_request.parse_rotation_time(None),
+            password_recovery_request.parse_iso8601("1970-01-01T00:00:00+00:00"),
+        )
+
+    def test_reserve_reissue_slot_returns_none_on_conditional_conflict(self):
+        table = Mock()
+        table.get_item.return_value = {"Item": {"reissue_version": 2}}
+        table.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException"}},
+            "UpdateItem",
+        )
+
+        self.assertIsNone(
+            password_recovery_request.reserve_reissue_slot(
+                table,
+                username="alice",
+                email="alice@example.com",
+                source_ip="203.0.113.5",
+                cooldown_minutes=0,
+                max_requests_per_day=5,
+            )
+        )
+
+    def test_release_reissue_slot_ignores_conditional_conflict(self):
+        table = Mock()
+        table.update_item.side_effect = ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException"}},
+            "UpdateItem",
+        )
+
+        password_recovery_request.release_reissue_slot(
+            table,
+            username="alice",
+            reservation={
+                "last_reissue": None,
+                "last_reissue_request_ip": None,
+                "recent_reissues": [],
+                "reserved_version": 2,
+                "current_version": 1,
+            },
+        )
+
+        table.update_item.assert_called_once()
+
+    def test_release_reissue_slot_reraises_unexpected_errors(self):
+        table = Mock()
+        table.update_item.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied"}},
+            "UpdateItem",
+        )
+
+        with self.assertRaises(ClientError):
+            password_recovery_request.release_reissue_slot(
+                table,
+                username="alice",
+                reservation={
+                    "last_reissue": None,
+                    "last_reissue_request_ip": None,
+                    "recent_reissues": [],
+                    "reserved_version": 2,
+                    "current_version": 1,
+                },
+            )
+
+    def test_credential_object_exists_handles_not_found_and_raises_other_errors(self):
+        missing_s3 = FakeS3Client(existing_keys=set())
+        password_recovery_request.s3 = missing_s3
+        self.assertFalse(
+            password_recovery_request.credential_object_exists("bucket", "missing.json")
+        )
+
+        erroring_s3 = Mock()
+        erroring_s3.head_object.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied"}},
+            "HeadObject",
+        )
+        password_recovery_request.s3 = erroring_s3
+        with self.assertRaises(ClientError):
+            password_recovery_request.credential_object_exists("bucket", "blocked.json")
+
+    def test_extract_source_ip_prefers_forwarded_header(self):
+        self.assertEqual(
+            password_recovery_request.extract_source_ip(
+                {
+                    "headers": {"x-forwarded-for": "198.51.100.10, 203.0.113.5"},
+                    "requestContext": {"http": {"sourceIp": "203.0.113.5"}},
+                }
+            ),
+            "198.51.100.10",
+        )
+        self.assertEqual(
+            password_recovery_request.extract_source_ip(
+                {"requestContext": {"http": {"sourceIp": "203.0.113.5"}}}
+            ),
+            "203.0.113.5",
+        )
 
 
 if __name__ == "__main__":
