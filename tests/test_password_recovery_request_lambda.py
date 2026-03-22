@@ -489,7 +489,9 @@ class TestAccessKeyRecoveryRequest(unittest.TestCase):
         )
 
         self.assertEqual(result["statusCode"], 202)
-        recovery_state = next(item for item in table.items if item["SK"] == "RECOVERY#STATE")
+        recovery_state = next(
+            item for item in table.items if item["SK"] == "RECOVERY#STATE"
+        )
         self.assertIsNone(recovery_state["last_self_service_reissue_at"])
         self.assertEqual(recovery_state["recent_self_service_reissues"], [])
         self.assertEqual(recovery_state["reissue_version"], 0)

@@ -28,8 +28,8 @@ resource "aws_apigatewayv2_integration" "access_key_recovery_request" {
 }
 
 resource "aws_apigatewayv2_route" "access_key_recovery_request" {
-  api_id             = aws_apigatewayv2_api.access_key_recovery.id
-  route_key          = local.access_key_recovery_route_key
+  api_id    = aws_apigatewayv2_api.access_key_recovery.id
+  route_key = local.access_key_recovery_route_key
   #checkov:skip=CKV_AWS_309:The recovery route is intentionally anonymous and explicitly sets authorization_type to NONE.
   authorization_type = "NONE"
   target             = "integrations/${aws_apigatewayv2_integration.access_key_recovery_request.id}"
